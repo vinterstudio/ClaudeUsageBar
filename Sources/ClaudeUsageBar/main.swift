@@ -13,7 +13,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let detailLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let updatedLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
-    private let pollInterval: TimeInterval = 60
+    // Usage barely changes minute-to-minute, and these endpoints rate-limit
+    // aggressive polling. 5 minutes is plenty and keeps us well clear of 429s.
+    private let pollInterval: TimeInterval = 300
+
+    // When rate-limited (HTTP 429), stop fetching until this time. Grows on
+    // repeated 429s so we back off instead of hammering.
+    private var backoffUntil: Date?
+    private var backoffStep: TimeInterval = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -33,14 +40,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         for item in menu.items where item.action != nil { item.target = self }
         statusItem.menu = menu
 
-        refreshNow()
+        Task { await self.update() }
         timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.refreshNow()
+            Task { await self?.update() }
         }
     }
 
+    /// Menu "Refresh Now" — bypasses any active backoff.
     @objc private func refreshNow() {
-        Task { await self.update() }
+        Task { await self.update(userInitiated: true) }
     }
 
     @objc private func revealRaw() {
@@ -50,11 +58,22 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 
     @MainActor
-    private func update() async {
+    private func update(userInitiated: Bool = false) async {
+        // Honour an active backoff window (unless the user explicitly hit Refresh Now).
+        if let until = backoffUntil, Date() < until, !userInitiated {
+            return
+        }
         do {
             let token = try await auth.validAccessToken()
             let snapshot = try await usage.fetch(accessToken: token)
+            backoffUntil = nil
+            backoffStep = 0
             render(snapshot)
+        } catch UsageError.http(429, _) {
+            // Exponential backoff: 5, 10, 20 … capped at 30 minutes.
+            backoffStep = backoffStep == 0 ? 300 : min(backoffStep * 2, 1800)
+            backoffUntil = Date().addingTimeInterval(backoffStep)
+            renderRateLimited()
         } catch {
             renderError(error)
         }
@@ -87,6 +106,20 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         let t = DateFormatter(); t.timeStyle = .medium
         updatedLine.title = "Updated \(t.string(from: Date()))"
+    }
+
+    @MainActor
+    private func renderRateLimited() {
+        // Keep the menu-bar number and detail line (last good data) intact;
+        // just note in the status line that we're backing off.
+        let t = DateFormatter(); t.timeStyle = .short
+        if let until = backoffUntil {
+            statusLine.title = "Rate-limited — retrying after \(t.string(from: until))"
+        } else {
+            statusLine.title = "Rate-limited — backing off"
+        }
+        let full = DateFormatter(); full.timeStyle = .medium
+        updatedLine.title = "Last try \(full.string(from: Date()))"
     }
 
     @MainActor
