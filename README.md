@@ -2,13 +2,17 @@
 
 A native macOS menu bar app that shows your **Claude Code session usage percentage** — with zero model tokens consumed while running.
 
-![Menu bar showing CC 7%](https://img.shields.io/badge/menu%20bar-CC%207%25-blue)
+![Menu bar showing S 19% · W 25% · 02:00](https://img.shields.io/badge/menu%20bar-S%2019%25%20%C2%B7%20W%2025%25%20%C2%B7%2002%3A00-blue)
 
 ## What it does
 
-- Displays your 5-hour session usage (e.g. `CC 42%`) in the menu bar
-- Shows all usage windows (5h / 7d) with reset times in 24-hour clock
-- Polls every 60 seconds — no dock icon, runs silently in the background
+- Shows a compact summary in the menu bar: **`S 19% · W 25% · 02:00`**
+  - `S 19%` — current **s**ession (5h) used
+  - `W 25%` — **w**eekly (7d) used
+  - `02:00` — session reset time (24-hour clock)
+- Dropdown spells out both windows with reset times and countdowns
+- Polls every 5 minutes — no dock icon, runs silently in the background
+- Backs off automatically if the endpoint rate-limits (HTTP 429)
 
 **Token cost: zero.** The app reads the OAuth usage metadata endpoint — it never sends a prompt to a model.
 
@@ -62,12 +66,16 @@ The refresh is handled at most once every 8 hours. The Keychain is not touched o
 
 | Item | Description |
 |------|-------------|
-| `Session (5h): 42% used` | Primary window utilization |
-| `5h 42%  ·  7d 12%   (resets 14:30, in 1h 12m)` | All windows + 24h reset time |
+| `Session: 19% used   Weekly: 25% used` | Both windows, spelled out |
+| `Session resets 02:00 (in 4h 15m)   ·   Weekly resets Sat 09:00 (in 5d)` | Reset times (24h clock) + countdowns |
 | `Updated 14:28:01` | Last successful poll |
-| Refresh Now | Poll immediately |
+| Refresh Now | Poll immediately (bypasses any active backoff) |
 | Reveal Raw Response | Opens `~/Library/Logs/ClaudeUsageBar/last-usage-response.json` in Finder |
 | Quit | Exit |
+
+## Polling & rate limits
+
+The app polls every 5 minutes. Usage changes slowly, so this keeps the menu bar fresh without hammering the endpoint. If the endpoint returns **HTTP 429 (rate limited)**, the app backs off exponentially (5 → 10 → 20 min, capped at 30) and keeps showing the last good numbers, with the status line noting when it will retry. **Refresh Now** forces an immediate poll regardless of backoff.
 
 ## Security
 
