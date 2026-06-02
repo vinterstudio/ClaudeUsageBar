@@ -21,7 +21,7 @@ A native macOS menu bar app that shows your **Claude Code session usage percenta
 ## Install
 
 ```bash
-git clone https://github.com/andreasvesterlund/ClaudeUsageBar.git
+git clone https://github.com/vinterstudio/ClaudeUsageBar.git
 cd ClaudeUsageBar
 
 # (Recommended) Create a stable signing identity so "Always Allow" persists
