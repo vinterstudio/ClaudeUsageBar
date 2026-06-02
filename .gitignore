@@ -1,0 +1,18 @@
+# Swift build artefacts
+.build/
+*.o
+*.d
+
+# App bundle (built locally by build-app.sh)
+dist/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Editor
+.swiftpm/
