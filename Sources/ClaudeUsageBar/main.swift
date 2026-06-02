@@ -79,33 +79,55 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 24-hour clock formatter (e.g. "02:00"), independent of system locale.
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_GB")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     @MainActor
     private func render(_ snapshot: UsageSnapshot) {
-        guard let primary = snapshot.primary else {
+        let session = snapshot.windows.first { $0.label == "5h" } ?? snapshot.primary
+        let weekly  = snapshot.windows.first { $0.label == "7d" }
+
+        guard let session else {
             statusItem.button?.title = "CC ?"
             statusLine.title = "No usage data"
             return
         }
-        statusItem.button?.title = "CC \(primary.percent)%"
-        statusLine.title = "Session (\(primary.label)): \(primary.percent)% used"
 
-        // Detail: all windows, e.g. "5h 42%  ·  7d 12%"
-        detailLine.title = snapshot.windows.map { "\($0.label) \($0.percent)%" }.joined(separator: "  ·  ")
+        // Compact menu-bar title, e.g. "S 19% · W 25% · 02:00"
+        // S = current session (5h), W = weekly (7d), then the session reset time.
+        var bar = "S \(session.percent)%"
+        if let w = weekly { bar += " · W \(w.percent)%" }
+        if let reset = session.resetsAt { bar += " · \(Self.clock.string(from: reset))" }
+        statusItem.button?.title = bar
 
-        if let reset = primary.resetsAt {
-            let fmt = DateComponentsFormatter()
-            fmt.allowedUnits = [.hour, .minute]
-            fmt.unitsStyle = .abbreviated
-            let remaining = fmt.string(from: max(0, reset.timeIntervalSinceNow)) ?? ""
-
-            let clock = DateFormatter()
-            clock.locale = Locale(identifier: "en_GB")   // force 24-hour clock
-            clock.dateFormat = "HH:mm"
-            detailLine.title += "   (resets \(clock.string(from: reset)), in \(remaining))"
-        }
+        // Dropdown: spelled-out detail.
+        statusLine.title = "Session: \(session.percent)% used" + (weekly.map { "   Weekly: \($0.percent)% used" } ?? "")
+        detailLine.title = resetDescription(session: session, weekly: weekly)
 
         let t = DateFormatter(); t.timeStyle = .medium
         updatedLine.title = "Updated \(t.string(from: Date()))"
+    }
+
+    /// Builds the dropdown reset line with both 24h clock times and countdowns.
+    private func resetDescription(session: UsageWindow, weekly: UsageWindow?) -> String {
+        let dur = DateComponentsFormatter()
+        dur.allowedUnits = [.day, .hour, .minute]
+        dur.unitsStyle = .abbreviated
+        dur.maximumUnitCount = 2
+
+        func line(_ label: String, _ w: UsageWindow) -> String? {
+            guard let r = w.resetsAt else { return nil }
+            let remaining = dur.string(from: max(0, r.timeIntervalSinceNow)) ?? ""
+            return "\(label) resets \(Self.clock.string(from: r)) (in \(remaining))"
+        }
+        return [line("Session", session), weekly.flatMap { line("Weekly", $0) }]
+            .compactMap { $0 }
+            .joined(separator: "   ·   ")
     }
 
     @MainActor
