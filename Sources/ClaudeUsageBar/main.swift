@@ -64,11 +64,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
         do {
-            let token = try await auth.validAccessToken()
+            let token = try auth.validAccessToken()
             let snapshot = try await usage.fetch(accessToken: token)
             backoffUntil = nil
             backoffStep = 0
             render(snapshot)
+        } catch AuthError.staleToken {
+            // Claude Code hasn't refreshed its token yet. Don't refresh it
+            // ourselves (that would desync Claude Code) and don't flash an
+            // error — keep showing the last value until Claude Code rotates it.
+            return
         } catch UsageError.http(429, _) {
             // Exponential backoff: 5, 10, 20 … capped at 30 minutes.
             backoffStep = backoffStep == 0 ? 300 : min(backoffStep * 2, 1800)
@@ -150,9 +155,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         switch error {
         case AuthError.noCredentials:
             statusLine.title = "Not signed in to Claude Code"
-        case AuthError.refreshFailed(let m):
-            statusLine.title = "Token refresh failed"
-            detailLine.title = String(m.prefix(120))
         case UsageError.http(let code, _):
             statusLine.title = "Usage request failed (HTTP \(code))"
         default:

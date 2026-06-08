@@ -42,7 +42,7 @@ open dist/ClaudeUsageBar.app
 
 ## How it works
 
-Claude Code stores your OAuth credentials in the macOS login Keychain under the item `Claude Code-credentials`. ClaudeUsageBar reads that same item (using the Security framework — no shell calls), refreshes the token when expired, and calls:
+Claude Code stores your OAuth credentials in the macOS login Keychain under the item `Claude Code-credentials`. ClaudeUsageBar reads that same item (using the Security framework — no shell calls) and adopts whatever valid token Claude Code has stored. It never refreshes or writes the item — Claude Code is the sole owner, so the Keychain access list never gets reset (which is what caused repeated "security wants to access" prompts). With a valid token it calls:
 
 ```
 GET https://api.anthropic.com/api/oauth/usage
