@@ -261,44 +261,32 @@ final class NotchContentView: NSView {
     private let dim = NSColor.white.withAlphaComponent(0.55)
     private let faint = NSColor.white.withAlphaComponent(0.18)
 
-    /// Whether the menu bar is currently light.
-    ///
-    /// Only the collapsed wings need this: they paint no background and sit
-    /// directly on the menu bar. The pill and the expanded panel carry their own
-    /// black, so they always use the light-on-dark palette above.
-    ///
-    /// The menu bar can be light even in Dark Mode, because it picks up the
-    /// wallpaper. Probed 2026-09-09: with `NSApp.effectiveAppearance` reporting
-    /// DarkAqua over a pale wallpaper, the status item button reported
-    /// VibrantLight — so the controller feeds this from the status item, not
-    /// from the app.
+    /// Retained so the controller compiles unchanged; no longer used to pick
+    /// colours. See the note on `wingShadow`.
     var menuBarIsLight = false
 
-    /// Wing palette. The system colours are tuned to sit on dark backgrounds and
-    /// wash out badly on a light menu bar, so the light variants are darkened —
-    /// and the mid tier moves from yellow to orange, since yellow on light grey
-    /// is barely legible at any brightness.
-    private func wingColour(for percent: Int?) -> NSColor {
-        guard let percent else { return wingDim }
-        switch (percent, menuBarIsLight) {
-        case (..<60, false):  return .systemGreen
-        case (..<85, false):  return .systemYellow
-        case (_, false):      return .systemRed
-        case (..<60, true):   return NSColor(calibratedRed: 0.05, green: 0.42, blue: 0.15, alpha: 1)
-        case (..<85, true):   return NSColor(calibratedRed: 0.62, green: 0.36, blue: 0.00, alpha: 1)
-        default:              return NSColor(calibratedRed: 0.70, green: 0.10, blue: 0.10, alpha: 1)
-        }
-    }
-
-    private var wingDim: NSColor {
-        (menuBarIsLight ? NSColor.black : NSColor.white).withAlphaComponent(0.55)
-    }
-
-    /// Accent for live activity in the wings — the same green, darkened on light.
-    private var wingAccent: NSColor {
-        menuBarIsLight
-            ? NSColor(calibratedRed: 0.05, green: 0.42, blue: 0.15, alpha: 1)
-            : .systemGreen
+    /// A dark halo drawn behind the collapsed wing text.
+    ///
+    /// The wings paint no background, so their text sits on whatever the menu
+    /// bar happens to be — which cannot be predicted. Measured contrast of the
+    /// system colours against a dark bar, a light bar and a mid-blue one:
+    /// systemYellow scores 11.81 / 1.02 / 3.77. At 1.02 it is invisible, and no
+    /// single colour clears 3.0 on all three.
+    ///
+    /// Adapting the palette was tried first, keyed on the status item's
+    /// appearance. That signal is not stable: two reads 20s apart returned
+    /// VibrantLight then VibrantDark with no user action, which would have made
+    /// the colours flicker. A halo needs no signal — it is invisible on a dark
+    /// bar and becomes the contrasting edge on a light one.
+    private var wingShadow: NSShadow {
+        // A tight, low-blur shadow. Blur 3 read as muddy at 12pt — it smeared
+        // the glyph edges instead of defining them; the crispness comes from the
+        // stroke below, and this only deepens it.
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.6)
+        shadow.shadowBlurRadius = 1.5
+        shadow.shadowOffset = .zero
+        return shadow
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -339,25 +327,25 @@ final class NotchContentView: NSView {
             let w = measure(text, size: size)
             drawCentred(text,
                         in: NSRect(x: cursor - w, y: left.minY, width: w, height: left.height),
-                        align: .right, size: size, color: color)
+                        align: .right, size: size, color: color, halo: true)
             cursor -= w + 6
         }
 
         // Right-to-left: weekly sits nearest the notch, then a separator, then session.
         if let weekly = model.weekly {
-            place("W \(weekly.percent)%", size: 12, color: wingColour(for: weekly.percent))
-            place("·", size: 12, color: wingDim.withAlphaComponent(0.4))
+            place("W \(weekly.percent)%", size: 12, color: colour(for: weekly.percent))
+            place("·", size: 12, color: dim.withAlphaComponent(0.5))
         }
         place(model.session.map { "S \($0.percent)%" } ?? "S —",
-              size: 12, color: wingColour(for: model.session?.percent))
+              size: 12, color: colour(for: model.session?.percent))
 
         // Activity on the right wing, hugging the notch: dot first, then label.
         guard model.activity != .idle else { return }
-        if model.activity.isBusy { drawPulse(in: right, color: wingAccent) }
+        if model.activity.isBusy { drawPulse(in: right) }
         let labelRect = NSRect(x: right.minX + 20, y: right.minY,
                                width: right.width - 26, height: right.height)
         drawCentred(model.activity.label, in: labelRect, align: .left, size: 11,
-                    color: model.activity.isBusy ? wingAccent : wingDim)
+                    color: model.activity.isBusy ? NSColor.systemGreen : dim, halo: true)
     }
 
     /// Rendered width of one run, so coloured segments can be laid out by hand.
@@ -410,12 +398,12 @@ final class NotchContentView: NSView {
     /// Draws one line vertically centred in `rect`. The wings span the full menu
     /// bar height, so text has to be centred rather than pinned to the top.
     private func drawCentred(_ text: String, in rect: NSRect, align: NSTextAlignment,
-                             size: CGFloat, color: NSColor) {
+                             size: CGFloat, color: NSColor, halo: Bool = false) {
         guard !text.isEmpty else { return }
         let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium)
         let line = NSRect(x: rect.minX, y: rect.midY - font.capHeight,
                           width: rect.width, height: font.ascender - font.descender)
-        draw(text, in: line, align: align, size: size, color: color)
+        draw(text, in: line, align: align, size: size, color: color, halo: halo)
     }
 
     /// A small breathing dot, so "working" reads at a glance without animation
@@ -611,16 +599,25 @@ final class NotchContentView: NSView {
     }
 
     private func draw(_ text: String, in rect: NSRect, align: NSTextAlignment,
-                      size: CGFloat, weight: NSFont.Weight = .medium, color: NSColor) {
+                      size: CGFloat, weight: NSFont.Weight = .medium, color: NSColor,
+                      halo: Bool = false) {
         guard !text.isEmpty else { return }
         let style = NSMutableParagraphStyle()
         style.alignment = align
         style.lineBreakMode = .byTruncatingTail
-        let attrs: [NSAttributedString.Key: Any] = [
+        var attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight),
             .foregroundColor: color,
             .paragraphStyle: style,
         ]
+        if halo {
+            // Negative strokeWidth fills AND strokes, giving a crisp dark
+            // outline around each glyph — the thing that actually carries the
+            // contrast on a light bar. The shadow alone was too soft.
+            attrs[.shadow] = wingShadow
+            attrs[.strokeColor] = NSColor.black.withAlphaComponent(0.85)
+            attrs[.strokeWidth] = -3.0
+        }
         (text as NSString).draw(in: rect, withAttributes: attrs)
     }
 
@@ -690,18 +687,21 @@ extension NotchWindow {
         // Render the collapsed wings on BOTH menu bar appearances. The light
         // palette is the one that cannot be checked by eye on a dark-mode
         // machine, so it needs a sample of its own.
-        for (name, light) in [("notch-collapsed", false), ("notch-collapsed-light", true)] {
+        for (name, backing) in [
+            ("notch-collapsed",       NSColor(calibratedWhite: 0.12, alpha: 1)),
+            ("notch-collapsed-light", NSColor(calibratedWhite: 0.86, alpha: 1)),
+            ("notch-collapsed-blue",  NSColor(calibratedRed: 0.25, green: 0.43, blue: 0.63, alpha: 1)),
+        ] {
             let size = NSSize(width: notchWidth + 2 * wingWidth, height: notchHeight)
             let view = NotchContentView(frame: NSRect(origin: .zero, size: size))
             view.model = model
             view.mode = .notch(width: notchWidth, height: notchHeight)
-            view.menuBarIsLight = light
+
             guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             // Approximate the menu bar each palette is meant to sit on.
-            (light ? NSColor(calibratedWhite: 0.86, alpha: 1)
-                   : NSColor(calibratedWhite: 0.12, alpha: 1)).setFill()
+            backing.setFill()
             view.bounds.fill()
             NSGraphicsContext.restoreGraphicsState()
             view.cacheDisplay(in: view.bounds, to: rep)
