@@ -7,7 +7,7 @@ contact_links:
       still open a bug report with --doctor output; it is the fastest way for me to see
       what moved.
   - name: Feature idea
-    url: https://github.com/vinterstudio/ClaudeUsageBar/discussions
+    url: https://github.com/vinterstudio/ClaudeUsageBar#status--expectations
     about: >-
-      Open a discussion rather than an issue. This is a personal tool shared as-is, so
-      the bar for new features is "I want it too".
+      Open a blank issue and say what you want, but read this first — this is a personal
+      tool shared as-is, so the bar for new features is "I want it too".
