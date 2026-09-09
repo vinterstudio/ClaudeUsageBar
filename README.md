@@ -31,12 +31,16 @@ cd ClaudeUsageBar
 # (Recommended) Create a stable signing identity so "Always Allow" persists
 ./make-signing-identity.sh
 
-# Build the .app bundle into dist/
+# Build the .app bundle
 ./build-app.sh
 
 # Launch it
-open dist/ClaudeUsageBar.app
+open ClaudeUsageBar.app
 ```
+
+The build puts a real, double-clickable **`ClaudeUsageBar.app`** at the top of the repo —
+drag it to /Applications if you want it there. The bundle icon lives in `icon/`; edit
+`icon/AppIcon.svg` and re-run `icon/make-icon.sh` to change it.
 
 **Launch at login:** System Settings → General → Login Items → + → pick `ClaudeUsageBar.app`
 
@@ -87,7 +91,7 @@ The app polls every 5 minutes. Usage changes slowly, so this keeps the menu bar 
 ## Rebuilding
 
 ```bash
-./build-app.sh   # rebuilds dist/ClaudeUsageBar.app
+./build-app.sh   # rebuilds ClaudeUsageBar.app
 ```
 
 If you skip `make-signing-identity.sh` the app is signed ad-hoc. It still works, but you may be prompted for Keychain access again after each rebuild (click Always Allow each time).
