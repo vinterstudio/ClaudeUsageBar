@@ -269,6 +269,14 @@ anything you publish — a default render is a picture of your own projects and 
 | `--doctor --shape` | Print the credential JSON's structure, values redacted |
 | `--render-notch <dir> [--demo]` | Render overlay PNGs headlessly |
 
+## Credits
+
+Partly inspired by [codenotch](https://github.com/vinzdg/codenotch) by
+[@vinzdg](https://github.com/vinzdg) — a macOS app that pins a notch to a screen edge
+and tracks usage limits across many coding assistants (Claude Code, Cursor, Codex,
+Copilot and more). If you want breadth across tools, look there. ClaudeUsageBar goes
+narrow instead: one assistant, plus the 30-day token history rebuilt from local logs.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

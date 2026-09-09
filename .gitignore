@@ -19,3 +19,7 @@ xcuserdata/
 
 # Intermediate iconset (regenerate with icon/make-icon.sh)
 icon/AppIcon.iconset/
+
+# Legibility-check renders (regenerate with --render-notch); not used in the README
+docs/notch-collapsed-light.png
+docs/notch-collapsed-blue.png
