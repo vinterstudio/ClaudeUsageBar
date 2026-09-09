@@ -52,6 +52,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var notch: NotchWindow?
     /// Repaints the notch while Claude is busy, to drive the pulse.
     private var pulseTimer: Timer?
+    /// The menu bar's lightness can change with the wallpaper, which raises no
+    /// notification we can observe, so it is re-read on a slow timer.
+    private var appearanceTimer: Timer?
     private var model = NotchModel()
 
     private static let notchDefaultsKey = "ShowInNotch"
@@ -109,6 +112,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         if notchItem.state == .on { showNotch() }
+        appearanceTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncAppearance() }
+        }
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -116,6 +122,23 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         activity.stop()
+    }
+
+    /// Whether the menu bar is currently light.
+    ///
+    /// Read from the STATUS ITEM, not from `NSApp`. The menu bar picks up the
+    /// wallpaper and can be light while the system is in Dark Mode — probed
+    /// 2026-09-09, `NSApp.effectiveAppearance` reported DarkAqua while the
+    /// status item button reported VibrantLight over a pale wallpaper.
+    @MainActor
+    private var menuBarIsLight: Bool {
+        guard let appearance = statusItem?.button?.effectiveAppearance else { return false }
+        return appearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
+    }
+
+    @MainActor
+    private func syncAppearance() {
+        notch?.menuBarIsLight = menuBarIsLight
     }
 
     /// The menu bar item is an icon, not a readout.
@@ -165,8 +188,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// A resolution change can flip the presentation between notch and pill, so
     /// re-lay out and refresh the menu label rather than assuming the mode holds.
+    @MainActor
     @objc private func screensChanged() {
         notch?.layout()
+        syncAppearance()
         switch NotchGeometry.availability() {
         case .available:
             notchItem.title = "Show in Notch"
@@ -181,6 +206,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    @MainActor
     @objc private func toggleNotch() {
         let on = notchItem.state != .on
         notchItem.state = on ? .on : .off
@@ -217,10 +243,12 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: - Notch
 
+    @MainActor
     private func showNotch() {
         guard notch == nil else { return }
         let w = NotchWindow()
         w.model = model
+        w.menuBarIsLight = menuBarIsLight
         w.orderFrontRegardless()
         notch = w
     }
@@ -343,6 +371,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         model.weekly = weekly
         model.statusNote = nil
         notch?.model = model
+        syncAppearance()
         hasRenderedUsage = true
 
         guard let session else {
