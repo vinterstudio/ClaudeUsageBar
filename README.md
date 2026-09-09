@@ -99,3 +99,62 @@ MIT — see [LICENSE](LICENSE)
 ---
 
 Built by [Andreas Vesterlund](https://vinterstudio.com)
+
+## 30-day token history
+
+The dropdown and the notch panel show a rolling 30-day view of token usage,
+reconstructed from Claude Code's own transcripts in `~/.claude/projects/**/*.jsonl`.
+No API key, no network call, no third-party service — it reads files Claude Code
+has already written.
+
+- **Fresh tokens** (input + output + cache writes) drive the daily bars.
+  Cache reads are reported separately, and deliberately excluded from the bars:
+  on a real corpus they are ~98% of the raw count (3.3B of 3.35B over 30 days),
+  so including them turns the chart into a picture of cache-read volume.
+- **By project** splits the window by working directory.
+- Turns are deduplicated on `requestId`, so retries and resumed sessions are
+  counted once.
+
+Scanning is incremental: each file's parsed byte offset is remembered, so a
+refresh only decodes bytes appended since the last pass. The first, full scan of
+a ~900MB corpus takes about 8 seconds on an M2 and runs off the main thread.
+
+## Notch mode
+
+On a notched MacBook, **Show in Notch** puts the same data in an overlay that
+hugs the notch. Collapsed, two "wings" flank the cut-out with the session
+percentage and either the weekly percentage or the current activity. Hovering
+expands it into a panel with both quota bars, the 30-day chart and the project
+split.
+
+The menu item disables itself on a display without a notch rather than offering
+a control that would draw nothing.
+
+### Live activity (optional)
+
+Notch mode can react to what Claude Code is doing. This needs a hook script
+registered with Claude Code:
+
+```bash
+./hooks/install-hooks.sh          # merges into ~/.claude/settings.json (backs it up first)
+./hooks/install-hooks.sh --uninstall
+```
+
+The hook forwards exactly three fields to a local Unix socket — event name,
+session id and tool name. **No prompt text, file contents or tool arguments
+leave the machine, and nothing is sent anywhere off it.** The socket lives in the
+app's Application Support directory at mode 0600. The hook exits 0 on every path
+(including when the app is not running) so it can never fail one of your turns.
+
+Unlike notchi, there is no sentiment analysis and no API key: nothing here spends
+model tokens.
+
+### Rendering the notch without a display
+
+```bash
+swift build -c release
+./.build/release/ClaudeUsageBar --render-notch /tmp
+```
+
+Writes `notch-collapsed.png` and `notch-expanded.png` using your real history
+data — how the notch UI is verified in a build step rather than by eye.
