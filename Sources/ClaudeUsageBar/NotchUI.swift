@@ -175,11 +175,11 @@ final class NotchWindow: NSPanel {
         case .notch(let notchWidth, let notchHeight):
             width = isExpanded ? max(expandedWidth, notchWidth + 2 * Self.wingWidth)
                                : notchWidth + 2 * Self.wingWidth
-            // Hang past the notch so the drawn shape and the physical cut-out
-            // form ONE black form. Matching the notch height exactly (as this
-            // did) leaves nothing below the menu bar to merge with, which is
-            // why it read as text in the menu bar rather than as the notch.
-            height = isExpanded ? expandedHeight : notchHeight + Self.notchOverhang
+            // Collapsed sits exactly on the notch band and paints no background,
+            // so nothing protrudes over the desktop while idle. The overhang —
+            // and the black form that merges with the notch — belongs to the
+            // expanded panel, which appears on hover.
+            height = isExpanded ? expandedHeight : notchHeight
             top = screen.frame.maxY
         case .floating:
             width = isExpanded ? expandedWidth : floatingWidth
@@ -253,39 +253,14 @@ final class NotchContentView: NSView {
 
     /// Two "wings" flanking the physical notch.
     ///
-    /// One black form, flush with the top of the screen and overhanging the
-    /// notch, so the drawn shape and the physical cut-out read as a single
-    /// enlarged notch.
-    ///
-    /// An earlier version drew no background at all. That was an overcorrection:
-    /// the black looked pasted on only because the strip was 24pt tall inside a
-    /// 45pt menu bar, leaving a seam. At full height plus an overhang the black
-    /// is what sells the effect.
+    /// Text only, level with the menu bar, no background — nothing should
+    /// protrude over the desktop until the panel is opened.
     private func drawWings() {
         let wing = (bounds.width - notchWidth) / 2
         guard wing > 0 else { return }
 
-        let notchBand = bounds.height - NotchWindow.notchOverhang
-        let r = NotchWindow.notchOverhang
-
-        // Square at the top (flush with the screen edge), rounded at the bottom.
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: bounds.minX, y: bounds.minY))
-        path.line(to: NSPoint(x: bounds.minX, y: bounds.maxY - r))
-        path.appendArc(withCenter: NSPoint(x: bounds.minX + r, y: bounds.maxY - r),
-                       radius: r, startAngle: 180, endAngle: 270, clockwise: false)
-        path.line(to: NSPoint(x: bounds.maxX - r, y: bounds.maxY))
-        path.appendArc(withCenter: NSPoint(x: bounds.maxX - r, y: bounds.maxY - r),
-                       radius: r, startAngle: 270, endAngle: 0, clockwise: false)
-        path.line(to: NSPoint(x: bounds.maxX, y: bounds.minY))
-        path.close()
-        NSColor.black.setFill()
-        path.fill()
-
-        // Text sits on the notch band, level with the menu bar — not centred in
-        // the taller window, which would push it into the overhang.
-        let left = NSRect(x: 0, y: 0, width: wing, height: notchBand)
-        let right = NSRect(x: bounds.width - wing, y: 0, width: wing, height: notchBand)
+        let left = NSRect(x: 0, y: 0, width: wing, height: bounds.height)
+        let right = NSRect(x: bounds.width - wing, y: 0, width: wing, height: bounds.height)
 
         // BOTH quota windows live on the left wing, always. Weekly used to share
         // the right wing with the activity label, which meant it disappeared for
@@ -396,19 +371,8 @@ final class NotchContentView: NSView {
 
     private func drawExpanded() {
         // Panel body: rounded everywhere except the top edge, which stays flush
-        // with the screen edge so it appears to grow out of the notch.
-        let path = NSBezierPath()
-        let r: CGFloat = 18
-        let b = bounds
-        path.move(to: NSPoint(x: b.minX, y: b.minY))
-        path.line(to: NSPoint(x: b.minX, y: b.maxY - r))
-        path.appendArc(withCenter: NSPoint(x: b.minX + r, y: b.maxY - r), radius: r,
-                       startAngle: 180, endAngle: 90, clockwise: true)
-        path.line(to: NSPoint(x: b.maxX - r, y: b.maxY))
-        path.appendArc(withCenter: NSPoint(x: b.maxX - r, y: b.maxY - r), radius: r,
-                       startAngle: 90, endAngle: 0, clockwise: true)
-        path.line(to: NSPoint(x: b.maxX, y: b.minY))
-        path.close()
+        // with the screen edge so it grows out of the notch.
+        let path = Self.topFlushRoundedPath(in: bounds, radius: 18)
         NSColor.black.withAlphaComponent(0.93).setFill()
         path.fill()
         faint.setStroke()
@@ -443,10 +407,15 @@ final class NotchContentView: NSView {
                 NSBezierPath(roundedRect: filled, xRadius: 2, yRadius: 2)
                     .setFillWithColor(colour(for: pct))
             }
+            // The reset used to share the value line in `dim` at 10pt, where it
+            // was easy to miss entirely. It now sits on the title line, brighter
+            // and with a countdown, which is the part actually worth reading.
             if let reset = w?.resetsAt {
-                draw("resets \((w?.resetIsEstimated ?? false) ? "≈" : "")\(Self.resetLabel(reset))",
-                     in: NSRect(x: rect.minX, y: rect.minY + 14, width: rect.width, height: 24),
-                     align: .right, size: 10, color: dim)
+                let mark = (w?.resetIsEstimated ?? false) ? "≈" : ""
+                let left = Self.countdown.string(from: max(0, reset.timeIntervalSinceNow)) ?? ""
+                draw("resets \(mark)\(Self.resetLabel(reset))  ·  \(left)",
+                     in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: 14),
+                     align: .right, size: 10, color: NSColor.white.withAlphaComponent(0.8))
             }
         }
 
@@ -548,6 +517,21 @@ final class NotchContentView: NSView {
 
     // MARK: Helpers
 
+    /// A rect rounded at the bottom and square at the top.
+    ///
+    /// Built by rounding ALL corners of a rect extended past the top edge, so
+    /// the top corners fall outside the view and are clipped. The hand-rolled
+    /// version used `appendArc(withCenter:startAngle:endAngle:clockwise:)`,
+    /// whose angles are measured the other way round in a flipped view — it
+    /// swept the bottom edge into a diagonal and pushed a black wedge out on
+    /// one side. `NSBezierPath(roundedRect:)` is orientation-agnostic.
+    static func topFlushRoundedPath(in rect: NSRect, radius: CGFloat) -> NSBezierPath {
+        // Flipped view: minY is the TOP edge, so extending upward means -radius.
+        let extended = NSRect(x: rect.minX, y: rect.minY - radius,
+                              width: rect.width, height: rect.height + radius)
+        return NSBezierPath(roundedRect: extended, xRadius: radius, yRadius: radius)
+    }
+
     private func colour(for percent: Int?) -> NSColor {
         guard let percent else { return dim }
         switch percent {
@@ -575,6 +559,14 @@ final class NotchContentView: NSView {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_GB")
         f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    static let countdown: DateComponentsFormatter = {
+        let f = DateComponentsFormatter()
+        f.allowedUnits = [.day, .hour, .minute]
+        f.unitsStyle = .abbreviated
+        f.maximumUnitCount = 2
         return f
     }()
 
