@@ -58,7 +58,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "CC …"
+        applyStatusIcon()
 
         let menu = NSMenu()
         for item in [statusLine, detailLine, historyLine, projectsLine, updatedLine] {
@@ -116,6 +116,37 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         activity.stop()
+    }
+
+    /// The menu bar item is an icon, not a readout.
+    ///
+    /// It used to carry "S 45% · W 52% · 16:32", which duplicated the overlay and
+    /// — because the overlay's right wing extends past the notch — physically
+    /// collided with it, drawing "thinkingS 45% …". The icon keeps the menu (and
+    /// therefore the settings) reachable while the overlay owns the numbers.
+    ///
+    /// It is tinted by the session figure, so the menu bar still carries a
+    /// glanceable signal without repeating the text.
+    @MainActor
+    private func applyStatusIcon() {
+        guard let button = statusItem.button else { return }
+        button.title = ""
+        button.image = NSImage(systemSymbolName: "gauge.with.needle",
+                               accessibilityDescription: "Claude usage")
+        button.image?.isTemplate = true
+
+        guard let percent = model.session?.percent else {
+            button.contentTintColor = nil          // nil = follow the menu bar
+            button.toolTip = "Claude usage — waiting for data"
+            return
+        }
+        switch percent {
+        case ..<60:  button.contentTintColor = nil
+        case ..<85:  button.contentTintColor = .systemYellow
+        default:     button.contentTintColor = .systemRed
+        }
+        let weekly = model.weekly.map { "  ·  Weekly \($0.percent)%" } ?? ""
+        button.toolTip = "Session \(percent)%\(weekly)"
     }
 
     // MARK: - Menu actions
@@ -315,17 +346,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         hasRenderedUsage = true
 
         guard let session else {
-            statusItem.button?.title = "CC ?"
+            applyStatusIcon()
             statusLine.title = "No usage data"
             return
         }
 
         // Compact menu-bar title, e.g. "S 19% · W 25% · 02:00"
         // S = current session (5h), W = weekly (7d), then the session reset time.
-        var bar = "S \(session.percent)%"
-        if let w = weekly { bar += " · W \(w.percent)%" }
-        if let reset = session.resetsAt { bar += " · \(Self.clock.string(from: reset))" }
-        statusItem.button?.title = bar
+        applyStatusIcon()
 
         // Dropdown: spelled-out detail.
         statusLine.title = "Session: \(session.percent)% used" + (weekly.map { "   Weekly: \($0.percent)% used" } ?? "")
@@ -380,7 +408,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// wait instead of reading as a failure.
     @MainActor
     private func renderStaleToken() {
-        statusItem.button?.title = "CC ⏳"
+        applyStatusIcon()
         statusLine.title = "Waiting for Claude Code to refresh its token"
         detailLine.title = "The percentage appears once Claude Code next makes a request."
         model.statusNote = "Waiting for token"
@@ -407,7 +435,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func renderError(_ error: Error) {
-        statusItem.button?.title = "CC —"
+        applyStatusIcon()
         switch error {
         case AuthError.noCredentials:
             statusLine.title = "Not signed in to Claude Code"

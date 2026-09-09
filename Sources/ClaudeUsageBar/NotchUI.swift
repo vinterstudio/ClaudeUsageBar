@@ -123,6 +123,11 @@ final class NotchWindow: NSPanel {
     /// Static so the offscreen render uses the SAME value the window does — when
     /// the sample computed its own width it silently clipped the session figure.
     static let wingWidth: CGFloat = 124
+    /// How far the collapsed shape extends below the notch, giving it something
+    /// to merge with. Nothing can be drawn inside the notch itself — it is a
+    /// camera housing, not display area — so the illusion depends entirely on
+    /// this overhang sharing the notch's black.
+    static let notchOverhang: CGFloat = 13
 
     init() {
         super.init(contentRect: .zero,
@@ -170,7 +175,11 @@ final class NotchWindow: NSPanel {
         case .notch(let notchWidth, let notchHeight):
             width = isExpanded ? max(expandedWidth, notchWidth + 2 * Self.wingWidth)
                                : notchWidth + 2 * Self.wingWidth
-            height = isExpanded ? expandedHeight : notchHeight
+            // Hang past the notch so the drawn shape and the physical cut-out
+            // form ONE black form. Matching the notch height exactly (as this
+            // did) leaves nothing below the menu bar to merge with, which is
+            // why it read as text in the menu bar rather than as the notch.
+            height = isExpanded ? expandedHeight : notchHeight + Self.notchOverhang
             top = screen.frame.maxY
         case .floating:
             width = isExpanded ? expandedWidth : floatingWidth
@@ -244,16 +253,39 @@ final class NotchContentView: NSView {
 
     /// Two "wings" flanking the physical notch.
     ///
-    /// Deliberately NO background fill. The menu bar is translucent and picks up
-    /// the wallpaper's tint, so painting the wings solid black made them read as
-    /// two rectangles stuck on top of it. Drawing only the text lets them sit in
-    /// the menu bar as if they belonged to it.
+    /// One black form, flush with the top of the screen and overhanging the
+    /// notch, so the drawn shape and the physical cut-out read as a single
+    /// enlarged notch.
+    ///
+    /// An earlier version drew no background at all. That was an overcorrection:
+    /// the black looked pasted on only because the strip was 24pt tall inside a
+    /// 45pt menu bar, leaving a seam. At full height plus an overhang the black
+    /// is what sells the effect.
     private func drawWings() {
         let wing = (bounds.width - notchWidth) / 2
         guard wing > 0 else { return }
 
-        let left = NSRect(x: 0, y: 0, width: wing, height: bounds.height)
-        let right = NSRect(x: bounds.width - wing, y: 0, width: wing, height: bounds.height)
+        let notchBand = bounds.height - NotchWindow.notchOverhang
+        let r = NotchWindow.notchOverhang
+
+        // Square at the top (flush with the screen edge), rounded at the bottom.
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: bounds.minX, y: bounds.minY))
+        path.line(to: NSPoint(x: bounds.minX, y: bounds.maxY - r))
+        path.appendArc(withCenter: NSPoint(x: bounds.minX + r, y: bounds.maxY - r),
+                       radius: r, startAngle: 180, endAngle: 270, clockwise: false)
+        path.line(to: NSPoint(x: bounds.maxX - r, y: bounds.maxY))
+        path.appendArc(withCenter: NSPoint(x: bounds.maxX - r, y: bounds.maxY - r),
+                       radius: r, startAngle: 270, endAngle: 0, clockwise: false)
+        path.line(to: NSPoint(x: bounds.maxX, y: bounds.minY))
+        path.close()
+        NSColor.black.setFill()
+        path.fill()
+
+        // Text sits on the notch band, level with the menu bar — not centred in
+        // the taller window, which would push it into the overhang.
+        let left = NSRect(x: 0, y: 0, width: wing, height: notchBand)
+        let right = NSRect(x: bounds.width - wing, y: 0, width: wing, height: notchBand)
 
         // BOTH quota windows live on the left wing, always. Weekly used to share
         // the right wing with the activity label, which meant it disappeared for
