@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: It stopped working after a Claude update
+    url: https://github.com/vinterstudio/ClaudeUsageBar#status--expectations
+    about: >-
+      Likely — this reads undocumented internals that change without notice. Please
+      still open a bug report with --doctor output; it is the fastest way for me to see
+      what moved.
+  - name: Feature idea
+    url: https://github.com/vinterstudio/ClaudeUsageBar/discussions
+    about: >-
+      Open a discussion rather than an issue. This is a personal tool shared as-is, so
+      the bar for new features is "I want it too".

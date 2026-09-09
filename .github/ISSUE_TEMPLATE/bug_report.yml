@@ -1,0 +1,92 @@
+name: Bug report
+description: Something is wrong, blank, stale or crashing
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. This app reads undocumented internals of the Claude
+        desktop app and Claude Code, so the single most useful thing you can include is
+        the `--doctor` output below — it names which data source is in use, which is the
+        answer to most reports.
+
+        **It prints no token material.** Credential inspection is opt-in behind a
+        separate flag, and `--shape` redacts every value.
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`--doctor` output"
+      description: |
+        ```bash
+        swift build -c release && ./.build/release/ClaudeUsageBar --doctor
+        ```
+      render: text
+      placeholder: |
+        ClaudeUsageBar doctor
+
+        source: plan-usage-history.json (PRIMARY, no credentials needed)
+          session 41%, weekly 68%, 1040 samples, last sampled ...
+        notch: available (250pt wide)
+        history: 30 days, ... fresh tokens, ... cache reads, ... projects
+        activity socket: present at ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Launch the app
+        2. Enable Show in Notch
+        3. ...
+    validations:
+      required: false
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.2 (24C101)"
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Mac model and display resolution
+      description: Resolution matters for anything about the notch or the overlay.
+      placeholder: "MacBook Air M2, 2048x1332 (built-in)"
+    validations:
+      required: false
+
+  - type: input
+    id: commit
+    attributes:
+      label: Which commit you built
+      description: "`git rev-parse --short HEAD`"
+      placeholder: "00c57ff"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: screenshot-note
+    attributes:
+      label: If this is a visual problem
+      description: |
+        The overlay sits above everything, and macOS screen capture **cannot see it** —
+        a screenshot will show the desktop through it, and an offscreen render cannot
+        show occlusion by the physical notch. A **photo of the screen** is genuinely the
+        most useful artefact here.
+      options:
+        - label: I have attached a photo of the screen (for visual/overlay issues)
+          required: false

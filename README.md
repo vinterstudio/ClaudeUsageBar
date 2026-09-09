@@ -269,6 +269,24 @@ anything you publish — a default render is a picture of your own projects and 
 | `--doctor --shape` | Print the credential JSON's structure, values redacted |
 | `--render-notch <dir> [--demo]` | Render overlay PNGs headlessly |
 
+## Status & expectations
+
+This app reads **undocumented internals of other people's software**: a private JSON file
+the Claude desktop app writes, transcript logs Claude Code writes, and (as a fallback) an
+unpublished OAuth endpoint. None of that is a public API, and all of it can change without
+notice — it already has once, when Claude Code moved its credentials and killed the OAuth
+path in about six weeks.
+
+So: **expect it to break eventually, and expect a gap before I notice.** It is a personal
+tool I share, not a supported product.
+
+- Bug reports are welcome — please run `--doctor` (see
+  [Troubleshooting](#troubleshooting)) and paste the output. It names which source is in
+  use and prints no token material.
+- Open source, but **not open contribution**. Small, focused pull requests are fine;
+  please open an issue before anything large, so neither of us wastes an afternoon.
+- No support promised, no release schedule, no roadmap.
+
 ## Credits
 
 Partly inspired by [codenotch](https://github.com/vinzdg/codenotch) by
