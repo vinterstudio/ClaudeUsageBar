@@ -5,6 +5,10 @@ struct UsageWindow {
     let label: String          // e.g. "5h", "7d"
     let percent: Int           // 0...100 utilization
     let resetsAt: Date?
+    /// True when `resetsAt` was derived rather than reported. The plan-usage
+    /// file carries no reset timestamps, so its reset time is inferred from the
+    /// sample series and must never be presented as exact.
+    var resetIsEstimated: Bool = false
 }
 
 struct UsageSnapshot {

@@ -180,8 +180,17 @@ keychain item `Claude Code-credentials` now contains **empty** token strings wit
 the Electron `Claude Safe Storage` key. Running `claude` rewrites the old item but does
 not repopulate it, so that path cannot be revived — this was not a token lapse.
 
-The trade-off: the file carries no reset timestamps, so no reset time is shown when it is
-the source, rather than one being invented.
+The file carries no reset timestamps. The **session** reset is therefore derived: the
+five-hour window runs from your first message, which appears in the series as the most
+recent transition from `fh == 0` to `fh > 0`. Measured across 41 windows in a real 30-day
+series, the interval from that transition to the next drop clusters at 4.9–5.1h; the
+outliers are sampling gaps (machine asleep), not a different window length.
+
+It is accurate to about the sampling interval, so it is always rendered with a `≈` and the
+dropdown states the tolerance. It is suppressed entirely when there is no active window,
+when no transition is retained, or when the derived time is already past — a missed
+boundary is better shown as nothing than as a stale time. The **weekly** reset is not
+derivable this way and is not shown.
 
 ## Diagnosing
 

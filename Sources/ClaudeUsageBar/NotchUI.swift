@@ -412,7 +412,7 @@ final class NotchContentView: NSView {
                     .setFillWithColor(colour(for: pct))
             }
             if let reset = w?.resetsAt {
-                draw("resets \(Self.resetLabel(reset))",
+                draw("resets \((w?.resetIsEstimated ?? false) ? "≈" : "")\(Self.resetLabel(reset))",
                      in: NSRect(x: rect.minX, y: rect.minY + 14, width: rect.width, height: 24),
                      align: .right, size: 10, color: dim)
             }

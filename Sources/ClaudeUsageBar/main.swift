@@ -329,7 +329,12 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         // Dropdown: spelled-out detail.
         statusLine.title = "Session: \(session.percent)% used" + (weekly.map { "   Weekly: \($0.percent)% used" } ?? "")
-        detailLine.title = resetDescription(session: session, weekly: weekly)
+        let resets = resetDescription(session: session, weekly: weekly)
+        detailLine.title = resets.isEmpty
+            ? (session.percent == 0
+                ? "No active session window"
+                : "Session reset time not derivable from the sample history")
+            : resets
 
         let t = DateFormatter(); t.timeStyle = .medium
         switch source {
@@ -353,11 +358,20 @@ final class AppController: NSObject, NSApplicationDelegate {
         func line(_ label: String, _ w: UsageWindow) -> String? {
             guard let r = w.resetsAt else { return nil }
             let remaining = dur.string(from: max(0, r.timeIntervalSinceNow)) ?? ""
-            return "\(label) resets \(Self.clock.string(from: r)) (in \(remaining))"
+            // An estimate is marked as one. The plan-usage file reports no reset
+            // times, so this is derived from the sample series and is only as
+            // precise as the sampling interval.
+            let mark = w.resetIsEstimated ? "≈" : ""
+            return "\(label) resets \(mark)\(Self.clock.string(from: r)) (in \(remaining))"
         }
-        return [line("Session", session), weekly.flatMap { line("Weekly", $0) }]
+
+        var parts = [line("Session", session), weekly.flatMap { line("Weekly", $0) }]
             .compactMap { $0 }
-            .joined(separator: "   ·   ")
+        if session.resetIsEstimated {
+            let mins = Int((PlanUsageFile.samplingUncertainty() / 60).rounded())
+            parts.append("estimated ±\(mins) min")
+        }
+        return parts.joined(separator: "   ·   ")
     }
 
     /// Cold start with a token Claude Code has not yet rotated. Nothing is
@@ -510,8 +524,18 @@ if CommandLine.arguments.contains("--doctor") {
 let args = CommandLine.arguments
 if let i = args.firstIndex(of: "--render-notch"), i + 1 < args.count {
     var m = NotchModel()
-    m.session = UsageWindow(label: "5h", percent: 41, resetsAt: Date().addingTimeInterval(3600 * 2))
-    m.weekly = UsageWindow(label: "7d", percent: 68, resetsAt: Date().addingTimeInterval(86400 * 3))
+    // Use the REAL snapshot where available. Hardcoded sample values have now
+    // twice hidden a defect that only existed with live data — a clipped figure
+    // and a wrong-height strip — so the sample renders what actually ships.
+    if let live = PlanUsageFile.snapshot() {
+        m.session = live.windows.first { $0.label == "5h" }
+        m.weekly = live.windows.first { $0.label == "7d" }
+    } else {
+        m.session = UsageWindow(label: "5h", percent: 41,
+                                resetsAt: Date().addingTimeInterval(3600 * 2))
+        m.weekly = UsageWindow(label: "7d", percent: 68,
+                               resetsAt: Date().addingTimeInterval(86400 * 3))
+    }
     m.activity = .working(session: "abc12345", tool: "Bash")
     m.history = HistoryStore().refresh()
     try NotchWindow.renderSamples(model: m, to: args[i + 1])
