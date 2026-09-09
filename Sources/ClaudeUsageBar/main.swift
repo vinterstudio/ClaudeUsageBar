@@ -158,11 +158,18 @@ final class AppController: NSObject, NSApplicationDelegate {
                                accessibilityDescription: "Claude usage")
         button.image?.isTemplate = true
 
-        // Always white. A template image would otherwise be tinted by the
-        // system — black on a light menu bar — and the tint was also carrying
-        // the session level in amber/red. Both are overridden here; the level
-        // still reads from the overlay and the tooltip.
-        button.contentTintColor = .white
+        // Leave the tint to the system.
+        //
+        // Forcing an explicit white was tried and was worse in both directions:
+        // a fixed colour cannot contrast with a menu bar whose own colour is not
+        // fixed. A template image with no contentTintColor is the only thing
+        // guaranteed to be legible, because AppKit derives the tint FROM the
+        // menu bar — white on a dark one, black on a light one.
+        //
+        // The same reasoning as the wing text, which reached the opposite
+        // solution only because it cannot use a template: there the contrast has
+        // to be built into the glyphs.
+        button.contentTintColor = nil
 
         guard let percent = model.session?.percent else {
             button.toolTip = "Claude usage — waiting for data"
