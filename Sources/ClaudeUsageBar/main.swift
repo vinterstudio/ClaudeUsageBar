@@ -587,23 +587,28 @@ if CommandLine.arguments.contains("--doctor") {
 // code can be checked without a display or screen-recording permission.
 let args = CommandLine.arguments
 if let i = args.firstIndex(of: "--render-notch"), i + 1 < args.count {
+    // `--demo` renders invented data instead of yours. The default deliberately
+    // uses the live snapshot — hardcoded values have twice hidden a defect that
+    // only existed with real data (a clipped figure, a wrong-height strip) — but
+    // that makes every default render a picture of one machine's quota, project
+    // names and token volumes. Anything published (README, issue, bug report)
+    // wants --demo.
+    let demo = args.contains("--demo")
     var m = NotchModel()
-    // Use the REAL snapshot where available. Hardcoded sample values have now
-    // twice hidden a defect that only existed with live data — a clipped figure
-    // and a wrong-height strip — so the sample renders what actually ships.
-    if let live = PlanUsageFile.snapshot() {
+    if let live = PlanUsageFile.snapshot(), !demo {
         m.session = live.windows.first { $0.label == "5h" }
         m.weekly = live.windows.first { $0.label == "7d" }
     } else {
         m.session = UsageWindow(label: "5h", percent: 41,
-                                resetsAt: Date().addingTimeInterval(3600 * 2))
+                                resetsAt: Date().addingTimeInterval(3600 * 2),
+                                resetIsEstimated: true)
         m.weekly = UsageWindow(label: "7d", percent: 68,
                                resetsAt: Date().addingTimeInterval(86400 * 3))
     }
     m.activity = .working(session: "abc12345", tool: "Bash")
-    m.history = HistoryStore().refresh()
+    m.history = demo ? HistorySnapshot.demo() : HistoryStore().refresh()
     try NotchWindow.renderSamples(model: m, to: args[i + 1])
-    print("Rendered notch samples to \(args[i + 1])")
+    print("Rendered notch samples to \(args[i + 1])\(demo ? " (demo data)" : "")")
     exit(0)
 }
 

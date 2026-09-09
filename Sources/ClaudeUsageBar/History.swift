@@ -9,10 +9,10 @@ struct TokenTotals {
 
     /// Fresh tokens: what this turn actually cost to move through the model.
     ///
-    /// Cache reads are deliberately EXCLUDED. On a real corpus they are ~98% of
-    /// the raw count (3.3B of 3.35B over 30 days here), so including them makes
-    /// every chart a picture of cache-read volume and buries the day-to-day
-    /// signal. They are an order of magnitude cheaper than a fresh read, and are
+    /// Cache reads are deliberately EXCLUDED. On a real corpus they dominate the
+    /// raw count — around 98% of it, measured over a 30-day window — so including
+    /// them makes every chart a picture of cache-read volume and buries the
+    /// day-to-day signal. They are an order of magnitude cheaper than a fresh read, and are
     /// reported separately as `cacheRead`.
     var total: Int { input + output + cacheWrite }
 
@@ -41,6 +41,41 @@ struct HistorySnapshot {
 
     var grandTotal: TokenTotals { days.reduce(TokenTotals()) { $0 + $1.totals } }
     var busiestDay: Int { days.map(\.totals.total).max() ?? 0 }
+
+    /// Invented data for published screenshots, so a README image is never a
+    /// picture of the author's real projects and volumes. Shaped like a real
+    /// corpus — a weekday rhythm, one outlier day, a long cache-read tail — so
+    /// it still exercises the chart's scaling.
+    static func demo(windowDays: Int = 30) -> HistorySnapshot {
+        var snapshot = HistorySnapshot()
+        snapshot.windowDays = windowDays
+        let today = Calendar.current.startOfDay(for: Date())
+        let shape: [Double] = [
+            0.55, 0.72, 0.61, 0.80, 0.44, 0.06, 0.10,
+            0.68, 0.91, 0.75, 0.58, 0.83, 0.12, 0.04,
+            0.70, 0.66, 0.88, 0.52, 0.79, 0.09, 0.15,
+            0.62, 0.85, 1.00, 0.71, 0.60, 0.08, 0.05,
+            0.74, 0.48,
+        ]
+        snapshot.days = (0..<windowDays).map { offset in
+            let day = Calendar.current.date(byAdding: .day, value: offset - (windowDays - 1),
+                                            to: today) ?? today
+            let f = shape[offset % shape.count]
+            let fresh = Int(f * 2_400_000)
+            return (day: day,
+                    totals: TokenTotals(input: fresh / 5,
+                                        output: fresh / 8,
+                                        cacheRead: fresh * 70,
+                                        cacheWrite: fresh - fresh / 5 - fresh / 8))
+        }
+        snapshot.projects = [
+            ("api-gateway", 18_400_000), ("dotfiles", 9_100_000),
+            ("web-client", 6_700_000), ("scratch", 2_050_000),
+        ].map { (name: $0.0, totals: TokenTotals(input: $0.1 / 3, output: $0.1 / 6,
+                                                 cacheRead: $0.1 * 70,
+                                                 cacheWrite: $0.1 - $0.1 / 3 - $0.1 / 6)) }
+        return snapshot
+    }
 }
 
 /// Scans `~/.claude/projects/**/*.jsonl` for per-assistant-turn token counts.
