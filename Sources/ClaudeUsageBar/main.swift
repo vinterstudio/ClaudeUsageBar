@@ -239,12 +239,21 @@ final class AppController: NSObject, NSApplicationDelegate {
         if let until = backoffUntil, Date() < until, !userInitiated {
             return
         }
+        // Primary source: the file the desktop app already maintains. It needs no
+        // credentials, makes no network call, and — decisively for this app —
+        // cannot raise a keychain prompt. The OAuth endpoint below is now only a
+        // fallback for a machine where that file does not exist.
+        if let snapshot = PlanUsageFile.snapshot() {
+            render(snapshot, source: .planFile)
+            return
+        }
+
         do {
             let token = try auth.validAccessToken()
             let snapshot = try await usage.fetch(accessToken: token)
             backoffUntil = nil
             backoffStep = 0
-            render(snapshot)
+            render(snapshot, source: .oauth)
         } catch AuthError.staleToken {
             // Claude Code hasn't refreshed its token yet. Don't refresh it
             // ourselves (that would desync Claude Code) and don't flash an
@@ -270,8 +279,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         return f
     }()
 
+    enum UsageSource { case planFile, oauth }
+
     @MainActor
-    private func render(_ snapshot: UsageSnapshot) {
+    private func render(_ snapshot: UsageSnapshot, source: UsageSource) {
         let session = snapshot.windows.first { $0.label == "5h" } ?? snapshot.primary
         let weekly  = snapshot.windows.first { $0.label == "7d" }
 
@@ -299,7 +310,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         detailLine.title = resetDescription(session: session, weekly: weekly)
 
         let t = DateFormatter(); t.timeStyle = .medium
-        updatedLine.title = "Updated \(t.string(from: Date()))"
+        switch source {
+        case .planFile:
+            // Report when the desktop app last sampled, not when we read the file
+            // — the number is only ever as fresh as that sample.
+            let sampled = PlanUsageFile.lastModified.map { t.string(from: $0) } ?? "unknown"
+            updatedLine.title = "Sampled \(sampled) — from Claude desktop app"
+        case .oauth:
+            updatedLine.title = "Updated \(t.string(from: Date()))"
+        }
     }
 
     /// Builds the dropdown reset line with both 24h clock times and countdowns.
@@ -377,17 +396,71 @@ final class AppController: NSObject, NSApplicationDelegate {
 if CommandLine.arguments.contains("--doctor") {
     print("ClaudeUsageBar doctor\n")
 
+    if PlanUsageFile.exists, let snapshot = PlanUsageFile.snapshot() {
+        let sampled = PlanUsageFile.lastModified.map { "\($0)" } ?? "unknown"
+        let session = snapshot.windows.first { $0.label == "5h" }?.percent ?? -1
+        let weekly = snapshot.windows.first { $0.label == "7d" }?.percent ?? -1
+        print("source: plan-usage-history.json (PRIMARY, no credentials needed)")
+        print("  session \(session)%, weekly \(weekly)%, \(PlanUsageFile.samples().count) samples,"
+              + " last sampled \(sampled)")
+        print("credentials: not consulted — the plan-usage file covers this machine.")
+        print("  (Pass --check-credentials to inspect the keychain item. That reads the")
+        print("   secret and can raise a keychain prompt, so it is opt-in.)")
+    } else {
+        print("source: plan-usage-history.json MISSING — falling back to the OAuth endpoint")
+    }
+
+    // Reading the secret is the ONE operation here that can prompt for a keychain
+    // password, so it happens only when it can actually change the diagnosis:
+    // the plan file is missing, or the user explicitly asked.
+    if !PlanUsageFile.exists || CommandLine.arguments.contains("--check-credentials") {
     switch Auth().status() {
     case .ok(let expiresAt, let subscription):
         print("credentials: OK (expire \(expiresAt), plan \(subscription ?? "unknown"))")
     case .expired(let since, let subscription):
         print("credentials: EXPIRED since \(since) (plan \(subscription ?? "unknown"))")
-        print("  The keychain item 'Claude Code-credentials' is refreshed by the Claude Code")
-        print("  CLI, which this app deliberately never writes to. If you only use the")
-        print("  desktop app, nothing rotates it and the percentage stays stale.")
-        print("  Fix: run `claude` in a terminal once to refresh it.")
+        print("  Only matters if the plan-usage file above is missing.")
+        print("  Note: as of 2026-09 this item can exist with EMPTY token strings and")
+        print("  expiresAt 0 — Claude Code moved its credentials to the Electron")
+        print("  'Claude Safe Storage' key. Running `claude` rewrites the item but does")
+        print("  not repopulate it, so the OAuth path cannot be revived that way.")
     case .missing:
         print("credentials: MISSING — not signed in to the Claude Code CLI.")
+    }
+    }
+
+    // The credential JSON's shape has changed before (2026-09-09: `expiresAt`
+    // arrived as 0, which decoded silently and dated the token to 1970). Print
+    // the STRUCTURE — keys and value types only, every value redacted — so a
+    // format change is diagnosable without a single secret reaching the output.
+    if CommandLine.arguments.contains("--shape") {
+        print("\ncredential item shape (values redacted):")
+        if let raw = Keychain.readRaw(),
+           let data = raw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            func describe(_ any: Any) -> String {
+                switch any {
+                case let s as String: return "String(len \(s.count))"
+                case let n as NSNumber:
+                    // Numbers are the one thing safe to show: they are timestamps
+                    // and flags here, never secret material.
+                    return "Number(\(n))"
+                case let a as [Any]: return "Array(\(a.count))"
+                case is [String: Any]: return "Object"
+                default: return "\(type(of: any))"
+                }
+            }
+            func walk(_ dict: [String: Any], indent: String) {
+                for key in dict.keys.sorted() {
+                    let value = dict[key]!
+                    print("\(indent)\(key): \(describe(value))")
+                    if let nested = value as? [String: Any] { walk(nested, indent: indent + "  ") }
+                }
+            }
+            walk(obj, indent: "  ")
+        } else {
+            print("  (could not read or parse the item)")
+        }
     }
 
     switch NotchGeometry.availability() {

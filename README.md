@@ -159,6 +159,24 @@ swift build -c release
 Writes `notch-collapsed.png` and `notch-expanded.png` using your real history
 data — how the notch UI is verified in a build step rather than by eye.
 
+## Where the numbers come from
+
+**Primary: `~/Library/Application Support/Claude/plan-usage-history.json`.** The Claude
+desktop app records its own quota every ~15 minutes and keeps a rolling 30-day series
+(`fh` = five-hour %, `sd` = seven-day %). Reading it needs no credentials, makes no
+network call, and cannot raise a keychain prompt.
+
+**Fallback: the OAuth usage endpoint**, used only when that file is absent.
+
+The switch happened on 2026-09-09 because the OAuth path had stopped working: the
+keychain item `Claude Code-credentials` now contains **empty** token strings with
+`expiresAt: 0`, its refresh token having expired. Claude Code moved its credentials into
+the Electron `Claude Safe Storage` key. Running `claude` rewrites the old item but does
+not repopulate it, so that path cannot be revived — this was not a token lapse.
+
+The trade-off: the file carries no reset timestamps, so no reset time is shown when it is
+the source, rather than one being invented.
+
 ## Diagnosing
 
 ```bash
@@ -169,11 +187,13 @@ Reports credential state (never any token material), whether the notch is
 usable, the history totals and the activity socket. Two failure modes it exists
 to name, because neither is obvious from the UI:
 
-- **The percentage is stale / shows `CC ⏳`.** The keychain item
-  `Claude Code-credentials` is refreshed by the Claude Code **CLI**, and this app
-  is a deliberate read-only consumer of it. Using only the desktop app means
-  nothing rotates the token and the percentage freezes. Running `claude` in a
-  terminal once refreshes it.
+- **Repeated "wants to access key Claude Code-credentials" prompts.** Two causes,
+  both fixed. With an expired token the credential cache was never populated, so
+  every 5-minute poll performed a fresh secret read; and every rebuild changes the
+  code identity, invalidating any "Always Allow". `Auth` now compares the item's
+  modification date first — an attributes-only query that never prompts — and reads
+  the secret only when something actually changed. On a machine with the plan-usage
+  file, the keychain is not touched at all.
 - **Notch mode is unavailable on a MacBook that has a notch.** A notched panel
   offers, for some widths, both a taller mode extending beside the notch and a
   shorter one below it. A mode with no taller sibling (e.g. 1920x1200 on an
