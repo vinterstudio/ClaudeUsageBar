@@ -67,9 +67,12 @@ final class ActivityMonitor {
 
     func stop() {
         queue.async {
+            // The source's cancel handler owns the close — closing here too
+            // would close the descriptor twice, and by the time the handler ran
+            // that number could have been reused by another socket or file.
             self.source?.cancel()
             self.source = nil
-            if self.listenFD >= 0 { close(self.listenFD); self.listenFD = -1 }
+            self.listenFD = -1
             unlink(Self.socketPath)
             self.state = .idle
         }

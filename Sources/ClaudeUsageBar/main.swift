@@ -75,6 +75,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         // is addressable, and hangs below the menu bar as a pill where it isn't.
         // So the toggle is never disabled — only its label changes, to say which
         // presentation the current display will get.
+        notchHintItem.isEnabled = false
+        notchHintItem.isHidden = true
         switch NotchGeometry.availability() {
         case .available:
             notchItem.title = "Show in Notch"
@@ -86,8 +88,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             notchItem.title = "Show Overlay (pill)"
         }
         menu.addItem(notchItem)
-        notchHintItem.isEnabled = false
-        notchHintItem.isHidden = true
         menu.addItem(notchHintItem)
         menu.addItem(NSMenuItem(title: "Install Claude Code Hooks…",
                                 action: #selector(installHooks), keyEquivalent: ""))

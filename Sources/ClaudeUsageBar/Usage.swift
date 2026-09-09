@@ -76,7 +76,11 @@ final class UsageClient {
     }
 
     private static func clampPercent(_ d: Double) -> Int {
-        let v = d <= 1.0 ? d * 100 : d        // accept either 0..1 or 0..100
+        // Accept either a 0..1 fraction or a 0..100 percentage. Only a value
+        // strictly below 1 is unambiguously a fraction: `1` means 1% far more
+        // often than it means "the whole quota", and scaling it to 100 turned
+        // the least-used state into the most alarming reading.
+        let v = d < 1.0 ? d * 100 : d
         return max(0, min(100, Int(v.rounded())))
     }
 
