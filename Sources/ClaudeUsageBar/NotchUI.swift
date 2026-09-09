@@ -279,9 +279,8 @@ final class NotchContentView: NSView {
     /// the colours flicker. A halo needs no signal — it is invisible on a dark
     /// bar and becomes the contrasting edge on a light one.
     private var wingShadow: NSShadow {
-        // A tight, low-blur shadow. Blur 3 read as muddy at 12pt — it smeared
-        // the glyph edges instead of defining them; the crispness comes from the
-        // stroke below, and this only deepens it.
+        // Tight and low-blur: enough to separate the text from a pale menu bar
+        // without smearing the glyph edges. Blur 3 read as muddy at 12pt.
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(0.6)
         shadow.shadowBlurRadius = 1.5
@@ -610,14 +609,11 @@ final class NotchContentView: NSView {
             .foregroundColor: color,
             .paragraphStyle: style,
         ]
-        if halo {
-            // Negative strokeWidth fills AND strokes, giving a crisp dark
-            // outline around each glyph — the thing that actually carries the
-            // contrast on a light bar. The shadow alone was too soft.
-            attrs[.shadow] = wingShadow
-            attrs[.strokeColor] = NSColor.black.withAlphaComponent(0.85)
-            attrs[.strokeWidth] = -3.0
-        }
+        // A soft shadow only. An outline (negative strokeWidth) was tried and
+        // carried more contrast on a light menu bar, but it thickened every
+        // glyph and read as heavy-handed on a dark one, which is where the bar
+        // spends most of its time.
+        if halo { attrs[.shadow] = wingShadow }
         (text as NSString).draw(in: rect, withAttributes: attrs)
     }
 
