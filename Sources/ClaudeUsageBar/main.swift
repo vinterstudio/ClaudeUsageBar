@@ -66,8 +66,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         notchItem.action = #selector(toggleNotch)
         notchItem.state = UserDefaults.standard.bool(forKey: Self.notchDefaultsKey) ? .on : .off
-        if !NotchGeometry.hasNotch {
-            // Be honest rather than showing a control that would draw nothing.
+        switch NotchGeometry.availability() {
+        case .available:
+            break
+        case .hiddenByResolution(let current, let suggestion):
+            // The panel has a notch; this resolution just hides it. Say which
+            // one to pick — "no notched display" here would be plainly wrong.
+            notchItem.title = suggestion.map { "Show in Notch — needs \($0), not \(current)" }
+                ?? "Show in Notch — hidden at \(current)"
+            notchItem.action = nil
+        case .noNotch:
             notchItem.title = "Show in Notch (no notched display)"
             notchItem.action = nil
         }
@@ -361,6 +369,45 @@ final class AppController: NSObject, NSApplicationDelegate {
         let t = DateFormatter(); t.timeStyle = .medium
         updatedLine.title = "Tried \(t.string(from: Date()))"
     }
+}
+
+// Health report: why the number or the notch might not be showing. Prints no
+// token material. `--doctor` exists so this is a check that can be re-run rather
+// than a diagnosis that has to be repeated by hand.
+if CommandLine.arguments.contains("--doctor") {
+    print("ClaudeUsageBar doctor\n")
+
+    switch Auth().status() {
+    case .ok(let expiresAt, let subscription):
+        print("credentials: OK (expire \(expiresAt), plan \(subscription ?? "unknown"))")
+    case .expired(let since, let subscription):
+        print("credentials: EXPIRED since \(since) (plan \(subscription ?? "unknown"))")
+        print("  The keychain item 'Claude Code-credentials' is refreshed by the Claude Code")
+        print("  CLI, which this app deliberately never writes to. If you only use the")
+        print("  desktop app, nothing rotates it and the percentage stays stale.")
+        print("  Fix: run `claude` in a terminal once to refresh it.")
+    case .missing:
+        print("credentials: MISSING — not signed in to the Claude Code CLI.")
+    }
+
+    switch NotchGeometry.availability() {
+    case .available(let width):
+        print("notch: available (\(Int(width))pt wide)")
+    case .hiddenByResolution(let current, let suggestion):
+        print("notch: present in hardware but HIDDEN at \(current)")
+        print("  This mode has no taller sibling, so macOS runs the menu bar below the")
+        print("  notch and reports no safe-area inset.")
+        if let suggestion { print("  Fix: System Settings > Displays > \(suggestion)") }
+    case .noNotch:
+        print("notch: no notched display")
+    }
+
+    let h = HistoryStore().refresh()
+    let t = h.grandTotal
+    print("history: \(h.days.count) days, \(t.total) fresh tokens, \(t.cacheRead) cache reads,"
+          + " \(h.projects.count) projects")
+    print("activity socket: \(FileManager.default.fileExists(atPath: ActivityMonitor.socketPath) ? "present" : "absent") at \(ActivityMonitor.socketPath)")
+    exit(0)
 }
 
 // Verification entry point: render the notch to PNGs and exit, so the drawing

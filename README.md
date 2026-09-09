@@ -158,3 +158,25 @@ swift build -c release
 
 Writes `notch-collapsed.png` and `notch-expanded.png` using your real history
 data — how the notch UI is verified in a build step rather than by eye.
+
+## Diagnosing
+
+```bash
+./.build/release/ClaudeUsageBar --doctor
+```
+
+Reports credential state (never any token material), whether the notch is
+usable, the history totals and the activity socket. Two failure modes it exists
+to name, because neither is obvious from the UI:
+
+- **The percentage is stale / shows `CC ⏳`.** The keychain item
+  `Claude Code-credentials` is refreshed by the Claude Code **CLI**, and this app
+  is a deliberate read-only consumer of it. Using only the desktop app means
+  nothing rotates the token and the percentage freezes. Running `claude` in a
+  terminal once refreshes it.
+- **Notch mode is unavailable on a MacBook that has a notch.** A notched panel
+  offers, for some widths, both a taller mode extending beside the notch and a
+  shorter one below it. A mode with no taller sibling (e.g. 1920x1200 on an
+  M2 Air) runs the menu bar below the notch, and `safeAreaInsets.top` reads 0.
+  The menu item names the resolution to switch to rather than claiming there is
+  no notch.

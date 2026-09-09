@@ -37,6 +37,22 @@ final class Auth {
     /// The keychain is read only when this cache is empty or expired.
     private var cached: Credentials?
 
+    /// Health of the shared keychain item, for the `--doctor` report and the
+    /// menu. Deliberately returns no token material.
+    enum Status {
+        case ok(expiresAt: Date, subscription: String?)
+        case expired(since: Date, subscription: String?)
+        case missing
+    }
+
+    func status() -> Status {
+        guard let creds = try? currentCredentials() else { return .missing }
+        let expiry = Date(timeIntervalSince1970: creds.expiresAt / 1000)
+        return creds.isExpired
+            ? .expired(since: expiry, subscription: creds.subscriptionType)
+            : .ok(expiresAt: expiry, subscription: creds.subscriptionType)
+    }
+
     func currentCredentials() throws -> Credentials {
         guard let raw = Keychain.readRaw(),
               let data = raw.data(using: .utf8),

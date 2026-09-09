@@ -30,6 +30,60 @@ enum NotchGeometry {
         NSScreen.screens.contains { notchWidth(of: $0) != nil }
     }
 
+    /// Why notch mode is or isn't available. "No notch" and "notch hidden by the
+    /// current resolution" look identical through `safeAreaInsets` alone, and
+    /// telling a user with a notched MacBook that they have no notched display
+    /// is both wrong and unactionable.
+    enum Availability {
+        case available(width: CGFloat)
+        /// Panel has a notch, but the selected mode runs the menu bar below it.
+        case hiddenByResolution(current: String, suggestion: String?)
+        case noNotch
+    }
+
+    /// A notched panel offers, for some widths, both a taller mode that extends
+    /// beside the notch and a shorter one that sits below it — the pair differs
+    /// by the notch height. A mode with no taller sibling (e.g. 1920x1200 on an
+    /// M2 Air) therefore hides the notch, and `safeAreaInsets.top` reads 0.
+    static func availability() -> Availability {
+        if let screen = NSScreen.screens.first(where: { notchWidth(of: $0) != nil }),
+           let width = notchWidth(of: screen) {
+            return .available(width: width)
+        }
+
+        let id = CGMainDisplayID()
+        guard let current = CGDisplayCopyDisplayMode(id) else { return .noNotch }
+        let options = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDictionary
+        guard let modes = CGDisplayCopyAllDisplayModes(id, options) as? [CGDisplayMode] else {
+            return .noNotch
+        }
+
+        var heightsByWidth: [Int: Set<Int>] = [:]
+        for m in modes { heightsByWidth[m.width, default: []].insert(m.height) }
+
+        // Notch heights across the Apple lineup land in this range once scaled.
+        let notchCapable = heightsByWidth.values.contains { heights in
+            let sorted = heights.sorted()
+            return sorted.indices.dropFirst().contains { (20...80).contains(sorted[$0] - sorted[$0 - 1]) }
+        }
+        guard notchCapable else { return .noNotch }
+
+        // Suggest the tallest mode that does expose the notch.
+        let suggestion = heightsByWidth
+            .compactMap { width, heights -> (Int, Int)? in
+                let sorted = heights.sorted()
+                guard let taller = sorted.indices.dropFirst()
+                    .first(where: { (20...80).contains(sorted[$0] - sorted[$0 - 1]) })
+                else { return nil }
+                return (width, sorted[taller])
+            }
+            .max { $0.0 < $1.0 }
+            .map { "\($0.0)x\($0.1)" }
+
+        return .hiddenByResolution(current: "\(current.width)x\(current.height)",
+                                   suggestion: suggestion)
+    }
+
     /// The screen the notch UI should live on: the built-in notched display.
     static var preferredScreen: NSScreen? {
         NSScreen.screens.first { notchWidth(of: $0) != nil } ?? NSScreen.main
