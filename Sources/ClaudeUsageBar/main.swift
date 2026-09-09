@@ -27,6 +27,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var backoffUntil: Date?
     private var backoffStep: TimeInterval = 0
 
+    /// Whether a usage response has ever rendered. The stale-token path stays
+    /// silent to preserve the last good value — but on a cold start there is no
+    /// last good value, and staying silent leaves the launch placeholder up
+    /// forever with no explanation of why.
+    private var hasRenderedUsage = false
+
     // MARK: History
 
     private let history = HistoryStore()
@@ -235,6 +241,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             // Claude Code hasn't refreshed its token yet. Don't refresh it
             // ourselves (that would desync Claude Code) and don't flash an
             // error — keep showing the last value until Claude Code rotates it.
+            // With no last value to keep, say so rather than sitting on "CC …".
+            if !hasRenderedUsage { renderStaleToken() }
             return
         } catch UsageError.http(429, _) {
             // Exponential backoff: 5, 10, 20 … capped at 30 minutes.
@@ -263,6 +271,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         model.weekly = weekly
         model.statusNote = nil
         notch?.model = model
+        hasRenderedUsage = true
 
         guard let session else {
             statusItem.button?.title = "CC ?"
@@ -300,6 +309,21 @@ final class AppController: NSObject, NSApplicationDelegate {
         return [line("Session", session), weekly.flatMap { line("Weekly", $0) }]
             .compactMap { $0 }
             .joined(separator: "   ·   ")
+    }
+
+    /// Cold start with a token Claude Code has not yet rotated. Nothing is
+    /// broken and there is nothing for the user to fix — the number appears on
+    /// its own once Claude Code makes its next request — so this explains the
+    /// wait instead of reading as a failure.
+    @MainActor
+    private func renderStaleToken() {
+        statusItem.button?.title = "CC ⏳"
+        statusLine.title = "Waiting for Claude Code to refresh its token"
+        detailLine.title = "The percentage appears once Claude Code next makes a request."
+        model.statusNote = "Waiting for token"
+        notch?.model = model
+        let t = DateFormatter(); t.timeStyle = .medium
+        updatedLine.title = "Checked \(t.string(from: Date()))"
     }
 
     @MainActor
