@@ -158,15 +158,15 @@ final class AppController: NSObject, NSApplicationDelegate {
                                accessibilityDescription: "Claude usage")
         button.image?.isTemplate = true
 
+        // Always white. A template image would otherwise be tinted by the
+        // system — black on a light menu bar — and the tint was also carrying
+        // the session level in amber/red. Both are overridden here; the level
+        // still reads from the overlay and the tooltip.
+        button.contentTintColor = .white
+
         guard let percent = model.session?.percent else {
-            button.contentTintColor = nil          // nil = follow the menu bar
             button.toolTip = "Claude usage — waiting for data"
             return
-        }
-        switch percent {
-        case ..<60:  button.contentTintColor = nil
-        case ..<85:  button.contentTintColor = .systemYellow
-        default:     button.contentTintColor = .systemRed
         }
         let weekly = model.weekly.map { "  ·  Weekly \($0.percent)%" } ?? ""
         button.toolTip = "Session \(percent)%\(weekly)"
