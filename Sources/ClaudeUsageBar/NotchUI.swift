@@ -116,7 +116,10 @@ final class NotchWindow: NSPanel {
     /// short of a 56pt menu bar, with a visible seam beneath them.
     private let floatingHeight: CGFloat = 26
     private let floatingWidth: CGFloat = 190
-    private let expandedHeight: CGFloat = 358
+    /// Height of the panel's usable content. The window itself is taller in
+    /// notch mode by the height of the notch band, which is unusable — the panel
+    /// is flush with the screen top, so its first rows sit BEHIND the notch.
+    private let expandedContentHeight: CGFloat = 358
     private let expandedWidth: CGFloat = 460
     /// How far past the notch the collapsed wings extend on each side. Sized for
     /// "S 100% · W 100%" on the left wing at 12pt, the widest it can get.
@@ -179,11 +182,11 @@ final class NotchWindow: NSPanel {
             // so nothing protrudes over the desktop while idle. The overhang —
             // and the black form that merges with the notch — belongs to the
             // expanded panel, which appears on hover.
-            height = isExpanded ? expandedHeight : notchHeight
+            height = isExpanded ? expandedContentHeight + notchHeight : notchHeight
             top = screen.frame.maxY
         case .floating:
             width = isExpanded ? expandedWidth : floatingWidth
-            height = isExpanded ? expandedHeight : floatingHeight
+            height = isExpanded ? expandedContentHeight : floatingHeight
             // Hang below the menu bar rather than under it: on a display with no
             // addressable notch the menu bar occupies the very top row, and an
             // overlay there would fight it for the same pixels.
@@ -226,6 +229,12 @@ final class NotchContentView: NSView {
     var model = NotchModel()
     var mode: NotchWindow.Mode = .floating
     var isExpanded = false
+
+    /// Vertical space at the top of the panel that the notch covers.
+    var notchBandHeight: CGFloat {
+        if case .notch(_, let h) = mode { return h }
+        return 0
+    }
 
     /// Kept for the offscreen render entry point, which draws a sample notch.
     var notchWidth: CGFloat {
@@ -379,7 +388,13 @@ final class NotchContentView: NSView {
         path.lineWidth = 1
         path.stroke()
 
-        var y: CGFloat = 14
+        // Start BELOW the notch. The panel hangs from the top of the screen, so
+        // its first rows are physically behind the camera housing: with a 250pt
+        // notch centred in a 460pt panel, everything from x 105 to 355 in the
+        // top band is invisible. That swallowed the reset time entirely and half
+        // the weekly column. The band is left empty, which also gives the panel
+        // the merged-with-the-notch look.
+        var y: CGFloat = notchBandHeight + 14
         y = drawQuotaRow(top: y)
         y = drawActivityRow(top: y)
         y = drawChart(top: y)
@@ -407,21 +422,22 @@ final class NotchContentView: NSView {
                 NSBezierPath(roundedRect: filled, xRadius: 2, yRadius: 2)
                     .setFillWithColor(colour(for: pct))
             }
-            // The reset used to share the value line in `dim` at 10pt, where it
-            // was easy to miss entirely. It now sits on the title line, brighter
-            // and with a countdown, which is the part actually worth reading.
+            // Below the percentage and its bar, on its own line. It has now been
+            // in two worse places: sharing the value line (dim, easy to miss)
+            // and on the title line (right-aligned, which put it behind the
+            // notch). Left-aligned under the bar it is clear of both.
             if let reset = w?.resetsAt {
                 let mark = (w?.resetIsEstimated ?? false) ? "≈" : ""
                 let left = Self.countdown.string(from: max(0, reset.timeIntervalSinceNow)) ?? ""
                 draw("resets \(mark)\(Self.resetLabel(reset))  ·  \(left)",
-                     in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: 14),
-                     align: .right, size: 10, color: NSColor.white.withAlphaComponent(0.8))
+                     in: NSRect(x: rect.minX, y: rect.minY + 52, width: rect.width, height: 14),
+                     align: .left, size: 10, color: NSColor.white.withAlphaComponent(0.8))
             }
         }
 
         cell(left, "SESSION (5H)", model.session)
         cell(right, "WEEKLY (7D)", model.weekly)
-        return top + 64
+        return top + 78
     }
 
     private func drawActivityRow(top: CGFloat) -> CGFloat {
@@ -622,7 +638,11 @@ extension NotchWindow {
             ("notch-collapsed", Mode.notch(width: notchWidth, height: notchHeight), false,
              NSSize(width: notchWidth + 2 * wingWidth, height: notchHeight)),
             ("notch-floating", Mode.floating, false, NSSize(width: 190, height: 26)),
-            ("notch-expanded", Mode.floating, true, NSSize(width: 460, height: 358)),
+            // Rendered in notch mode so the sample reserves the same unusable
+            // band the real panel does — a floating sample would hide exactly
+            // the defect that put the reset time behind the notch.
+            ("notch-expanded", Mode.notch(width: notchWidth, height: notchHeight), true,
+             NSSize(width: 460, height: 358 + notchHeight)),
         ] {
             let view = NotchContentView(frame: NSRect(origin: .zero, size: size))
             view.model = model
