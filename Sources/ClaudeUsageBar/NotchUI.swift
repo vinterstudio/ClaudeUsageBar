@@ -118,8 +118,11 @@ final class NotchWindow: NSPanel {
     private let floatingWidth: CGFloat = 190
     private let expandedHeight: CGFloat = 358
     private let expandedWidth: CGFloat = 460
-    /// How far past the notch the collapsed wings extend on each side.
-    private let wingWidth: CGFloat = 88
+    /// How far past the notch the collapsed wings extend on each side. Sized for
+    /// "S 100% · W 100%" on the left wing at 12pt, the widest it can get.
+    /// Static so the offscreen render uses the SAME value the window does — when
+    /// the sample computed its own width it silently clipped the session figure.
+    static let wingWidth: CGFloat = 124
 
     init() {
         super.init(contentRect: .zero,
@@ -165,8 +168,8 @@ final class NotchWindow: NSPanel {
 
         switch mode {
         case .notch(let notchWidth, let notchHeight):
-            width = isExpanded ? max(expandedWidth, notchWidth + 2 * wingWidth)
-                               : notchWidth + 2 * wingWidth
+            width = isExpanded ? max(expandedWidth, notchWidth + 2 * Self.wingWidth)
+                               : notchWidth + 2 * Self.wingWidth
             height = isExpanded ? expandedHeight : notchHeight
             top = screen.frame.maxY
         case .floating:
@@ -252,20 +255,46 @@ final class NotchContentView: NSView {
         let left = NSRect(x: 0, y: 0, width: wing, height: bounds.height)
         let right = NSRect(x: bounds.width - wing, y: 0, width: wing, height: bounds.height)
 
-        let leftText = model.session.map { "S \($0.percent)%" } ?? "S —"
-        drawCentred(leftText, in: left.insetBy(dx: 10, dy: 0), align: .left, size: 12,
-                    color: colour(for: model.session?.percent))
+        // BOTH quota windows live on the left wing, always. Weekly used to share
+        // the right wing with the activity label, which meant it disappeared for
+        // exactly as long as Claude was working — the moment you are most likely
+        // to glance at it. Activity now has the right wing to itself.
+        //
+        // Each figure keeps its own colour coding, so they are drawn as separate
+        // runs laid out right-to-left rather than as one joined string.
+        let inset: CGFloat = 10
+        var cursor = left.maxX - inset      // grow leftwards from the notch edge
 
-        if model.activity != .idle {
-            drawCentred(model.activity.label, in: right.insetBy(dx: 10, dy: 0),
-                        align: .right, size: 11,
-                        color: model.activity.isBusy ? NSColor.systemGreen : dim)
-            if model.activity.isBusy { drawPulse(in: right) }
-        } else {
-            let rightText = model.weekly.map { "W \($0.percent)%" } ?? ""
-            drawCentred(rightText, in: right.insetBy(dx: 10, dy: 0), align: .right, size: 12,
-                        color: colour(for: model.weekly?.percent))
+        func place(_ text: String, size: CGFloat, color: NSColor) {
+            guard !text.isEmpty else { return }
+            let w = measure(text, size: size)
+            drawCentred(text,
+                        in: NSRect(x: cursor - w, y: left.minY, width: w, height: left.height),
+                        align: .right, size: size, color: color)
+            cursor -= w + 6
         }
+
+        // Right-to-left: weekly sits nearest the notch, then a separator, then session.
+        if let weekly = model.weekly {
+            place("W \(weekly.percent)%", size: 12, color: colour(for: weekly.percent))
+            place("·", size: 12, color: faint)
+        }
+        place(model.session.map { "S \($0.percent)%" } ?? "S —",
+              size: 12, color: colour(for: model.session?.percent))
+
+        // Activity on the right wing, hugging the notch: dot first, then label.
+        guard model.activity != .idle else { return }
+        if model.activity.isBusy { drawPulse(in: right) }
+        let labelRect = NSRect(x: right.minX + 20, y: right.minY,
+                               width: right.width - 26, height: right.height)
+        drawCentred(model.activity.label, in: labelRect, align: .left, size: 11,
+                    color: model.activity.isBusy ? NSColor.systemGreen : dim)
+    }
+
+    /// Rendered width of one run, so coloured segments can be laid out by hand.
+    private func measure(_ text: String, size: CGFloat) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium)
+        return (text as NSString).size(withAttributes: [.font: font]).width
     }
 
     /// Collapsed presentation with no notch to hug: a rounded pill under the menu
@@ -290,12 +319,18 @@ final class NotchContentView: NSView {
             // itself) drew it straight through the "S 41%" text.
             let activityRect = NSRect(x: inner.midX, y: inner.minY,
                                       width: inner.width / 2, height: inner.height)
-            drawCentred(model.activity.label, in: activityRect, align: .right, size: 11,
-                        color: model.activity.isBusy ? NSColor.systemGreen : dim)
-            if model.activity.isBusy { drawPulse(in: activityRect) }
+            // Too narrow for the tool name alongside both figures, so the pill
+            // keeps the numbers and reduces activity to the pulsing dot.
             drawCentred(model.session.map { "S \($0.percent)%" } ?? "S —",
                         in: inner, align: .left, size: 12,
                         color: colour(for: model.session?.percent))
+            drawCentred(model.weekly.map { "W \($0.percent)%" } ?? "",
+                        in: inner, align: .right, size: 12,
+                        color: colour(for: model.weekly?.percent))
+            if model.activity.isBusy {
+                drawPulse(in: NSRect(x: inner.midX - 12, y: inner.minY,
+                                     width: 24, height: inner.height))
+            }
         } else {
             drawCentred(model.session.map { "S \($0.percent)%" } ?? "S —",
                         in: inner, align: .left, size: 12,
@@ -564,7 +599,7 @@ extension NotchWindow {
 
         for (name, mode, expanded, size) in [
             ("notch-collapsed", Mode.notch(width: notchWidth, height: notchHeight), false,
-             NSSize(width: notchWidth + 176, height: notchHeight)),
+             NSSize(width: notchWidth + 2 * wingWidth, height: notchHeight)),
             ("notch-floating", Mode.floating, false, NSSize(width: 190, height: 26)),
             ("notch-expanded", Mode.floating, true, NSSize(width: 460, height: 358)),
         ] {

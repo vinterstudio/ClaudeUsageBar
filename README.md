@@ -127,6 +127,8 @@ display — the presentation adapts:
 - **Notch mode**, where the notch is addressable: two "wings" flank the cut-out,
   matched to the display's own `safeAreaInsets.top` height, drawn with no
   background so they sit in the translucent menu bar rather than on top of it.
+  The left wing carries both quota figures (`S 41% · W 68%`, each colour-coded
+  independently); the right wing carries live activity.
 - **Pill mode**, where it isn't: a rounded pill hanging just below the menu bar.
 
 Hovering expands either into the same panel — both quota bars, the 30-day chart
