@@ -99,3 +99,110 @@ MIT — see [LICENSE](LICENSE)
 ---
 
 Built by [Andreas Vesterlund](https://vinterstudio.com)
+
+## 30-day token history
+
+The dropdown and the notch panel show a rolling 30-day view of token usage,
+reconstructed from Claude Code's own transcripts in `~/.claude/projects/**/*.jsonl`.
+No API key, no network call, no third-party service — it reads files Claude Code
+has already written.
+
+- **Fresh tokens** (input + output + cache writes) drive the daily bars.
+  Cache reads are reported separately, and deliberately excluded from the bars:
+  on a real corpus they are ~98% of the raw count (3.3B of 3.35B over 30 days),
+  so including them turns the chart into a picture of cache-read volume.
+- **By project** splits the window by working directory.
+- Turns are deduplicated on `requestId`, so retries and resumed sessions are
+  counted once.
+
+Scanning is incremental: each file's parsed byte offset is remembered, so a
+refresh only decodes bytes appended since the last pass. The first, full scan of
+a ~900MB corpus takes about 8 seconds on an M2 and runs off the main thread.
+
+## Overlay mode
+
+The overlay shows the same data outside the menu bar, and works on **every**
+display — the presentation adapts:
+
+- **Notch mode**, where the notch is addressable: two "wings" flank the cut-out,
+  matched to the display's own `safeAreaInsets.top` height, drawn with no
+  background so they sit in the translucent menu bar rather than on top of it.
+  The left wing carries both quota figures (`S 41% · W 68%`, each colour-coded
+  independently); the right wing carries live activity.
+- **Pill mode**, where it isn't: a rounded pill hanging just below the menu bar.
+
+Hovering expands either into the same panel — both quota bars, the 30-day chart
+and the project split. The mode flips automatically on a resolution change; the
+menu names which presentation the current display will get, and says which
+resolution would expose the real notch.
+
+### Live activity (optional)
+
+Notch mode can react to what Claude Code is doing. This needs a hook script
+registered with Claude Code:
+
+```bash
+./hooks/install-hooks.sh          # merges into ~/.claude/settings.json (backs it up first)
+./hooks/install-hooks.sh --uninstall
+```
+
+The hook forwards exactly three fields to a local Unix socket — event name,
+session id and tool name. **No prompt text, file contents or tool arguments
+leave the machine, and nothing is sent anywhere off it.** The socket lives in the
+app's Application Support directory at mode 0600. The hook exits 0 on every path
+(including when the app is not running) so it can never fail one of your turns.
+
+Unlike notchi, there is no sentiment analysis and no API key: nothing here spends
+model tokens.
+
+### Rendering the notch without a display
+
+```bash
+swift build -c release
+./.build/release/ClaudeUsageBar --render-notch /tmp
+```
+
+Writes `notch-collapsed.png` and `notch-expanded.png` using your real history
+data — how the notch UI is verified in a build step rather than by eye.
+
+## Where the numbers come from
+
+**Primary: `~/Library/Application Support/Claude/plan-usage-history.json`.** The Claude
+desktop app records its own quota every ~15 minutes and keeps a rolling 30-day series
+(`fh` = five-hour %, `sd` = seven-day %). Reading it needs no credentials, makes no
+network call, and cannot raise a keychain prompt.
+
+**Fallback: the OAuth usage endpoint**, used only when that file is absent.
+
+The switch happened on 2026-09-09 because the OAuth path had stopped working: the
+keychain item `Claude Code-credentials` now contains **empty** token strings with
+`expiresAt: 0`, its refresh token having expired. Claude Code moved its credentials into
+the Electron `Claude Safe Storage` key. Running `claude` rewrites the old item but does
+not repopulate it, so that path cannot be revived — this was not a token lapse.
+
+The trade-off: the file carries no reset timestamps, so no reset time is shown when it is
+the source, rather than one being invented.
+
+## Diagnosing
+
+```bash
+./.build/release/ClaudeUsageBar --doctor
+```
+
+Reports credential state (never any token material), whether the notch is
+usable, the history totals and the activity socket. Two failure modes it exists
+to name, because neither is obvious from the UI:
+
+- **Repeated "wants to access key Claude Code-credentials" prompts.** Two causes,
+  both fixed. With an expired token the credential cache was never populated, so
+  every 5-minute poll performed a fresh secret read; and every rebuild changes the
+  code identity, invalidating any "Always Allow". `Auth` now compares the item's
+  modification date first — an attributes-only query that never prompts — and reads
+  the secret only when something actually changed. On a machine with the plan-usage
+  file, the keychain is not touched at all.
+- **Notch mode is unavailable on a MacBook that has a notch.** A notched panel
+  offers, for some widths, both a taller mode extending beside the notch and a
+  shorter one below it. A mode with no taller sibling (e.g. 1920x1200 on an
+  M2 Air) runs the menu bar below the notch, and `safeAreaInsets.top` reads 0.
+  The menu item names the resolution to switch to rather than claiming there is
+  no notch.

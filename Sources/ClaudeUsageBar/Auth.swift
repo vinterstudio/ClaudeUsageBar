@@ -36,6 +36,25 @@ final class Auth {
     /// every time (which would trigger a keychain prompt on every poll).
     /// The keychain is read only when this cache is empty or expired.
     private var cached: Credentials?
+    /// Modification date of the keychain item at the moment we last read its
+    /// secret. Used to skip re-reads when nothing has been rotated.
+    private var cachedItemDate: Date?
+
+    /// Health of the shared keychain item, for the `--doctor` report and the
+    /// menu. Deliberately returns no token material.
+    enum Status {
+        case ok(expiresAt: Date, subscription: String?)
+        case expired(since: Date, subscription: String?)
+        case missing
+    }
+
+    func status() -> Status {
+        guard let creds = try? currentCredentials() else { return .missing }
+        let expiry = Date(timeIntervalSince1970: creds.expiresAt / 1000)
+        return creds.isExpired
+            ? .expired(since: expiry, subscription: creds.subscriptionType)
+            : .ok(expiresAt: expiry, subscription: creds.subscriptionType)
+    }
 
     func currentCredentials() throws -> Credentials {
         guard let raw = Keychain.readRaw(),
@@ -52,10 +71,27 @@ final class Auth {
     func validAccessToken() throws -> String {
         if let c = cached, !c.isExpired { return c.accessToken }
 
-        // Cache cold/expired: re-read the keychain and adopt Claude Code's token.
+        // The token we hold is missing or expired. Before reading the secret
+        // again — the one operation that can raise a keychain prompt — check the
+        // item's modification date, which costs nothing and never prompts. If it
+        // has not changed since our last read, the same expired token is still
+        // in there and re-reading it would prompt for nothing.
+        //
+        // This mattered: with an expired token, `cached` was never populated, so
+        // every 5-minute poll performed a fresh secret read. Whenever the ACL was
+        // invalidated (any rebuild changes the code identity), that became a
+        // password prompt every five minutes.
+        let itemDate = Keychain.modificationDate()
+        if cached != nil, let itemDate, let cachedItemDate, itemDate == cachedItemDate {
+            throw AuthError.staleToken
+        }
+
         let creds = try currentCredentials()
-        guard !creds.isExpired else { throw AuthError.staleToken }
+        cachedItemDate = itemDate
+        // Hold on to it even when expired, so the check above has something to
+        // compare against on the next poll.
         cached = creds
+        guard !creds.isExpired else { throw AuthError.staleToken }
         return creds.accessToken
     }
 }
