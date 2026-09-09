@@ -119,16 +119,20 @@ Scanning is incremental: each file's parsed byte offset is remembered, so a
 refresh only decodes bytes appended since the last pass. The first, full scan of
 a ~900MB corpus takes about 8 seconds on an M2 and runs off the main thread.
 
-## Notch mode
+## Overlay mode
 
-On a notched MacBook, **Show in Notch** puts the same data in an overlay that
-hugs the notch. Collapsed, two "wings" flank the cut-out with the session
-percentage and either the weekly percentage or the current activity. Hovering
-expands it into a panel with both quota bars, the 30-day chart and the project
-split.
+The overlay shows the same data outside the menu bar, and works on **every**
+display — the presentation adapts:
 
-The menu item disables itself on a display without a notch rather than offering
-a control that would draw nothing.
+- **Notch mode**, where the notch is addressable: two "wings" flank the cut-out,
+  matched to the display's own `safeAreaInsets.top` height, drawn with no
+  background so they sit in the translucent menu bar rather than on top of it.
+- **Pill mode**, where it isn't: a rounded pill hanging just below the menu bar.
+
+Hovering expands either into the same panel — both quota bars, the 30-day chart
+and the project split. The mode flips automatically on a resolution change; the
+menu names which presentation the current display will get, and says which
+resolution would expose the real notch.
 
 ### Live activity (optional)
 

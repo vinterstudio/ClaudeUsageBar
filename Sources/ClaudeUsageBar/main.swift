@@ -17,6 +17,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let projectsLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let updatedLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let notchItem = NSMenuItem(title: "Show in Notch", action: nil, keyEquivalent: "")
+    /// Only shown when a notch exists but the current resolution hides it.
+    private let notchHintItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
     // Usage barely changes minute-to-minute, and these endpoints rate-limit
     // aggressive polling. 5 minutes is plenty and keeps us well clear of 429s.
@@ -66,20 +68,24 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         notchItem.action = #selector(toggleNotch)
         notchItem.state = UserDefaults.standard.bool(forKey: Self.notchDefaultsKey) ? .on : .off
+        // The overlay works on every display now: it hugs a real notch where one
+        // is addressable, and hangs below the menu bar as a pill where it isn't.
+        // So the toggle is never disabled — only its label changes, to say which
+        // presentation the current display will get.
         switch NotchGeometry.availability() {
         case .available:
-            break
+            notchItem.title = "Show in Notch"
         case .hiddenByResolution(let current, let suggestion):
-            // The panel has a notch; this resolution just hides it. Say which
-            // one to pick — "no notched display" here would be plainly wrong.
-            notchItem.title = suggestion.map { "Show in Notch — needs \($0), not \(current)" }
-                ?? "Show in Notch — hidden at \(current)"
-            notchItem.action = nil
+            notchItem.title = "Show Overlay (pill — notch unusable at \(current))"
+            notchHintItem.title = suggestion.map { "Switch to \($0) to use the notch itself" } ?? ""
+            notchHintItem.isHidden = notchHintItem.title.isEmpty
         case .noNotch:
-            notchItem.title = "Show in Notch (no notched display)"
-            notchItem.action = nil
+            notchItem.title = "Show Overlay (pill)"
         }
         menu.addItem(notchItem)
+        notchHintItem.isEnabled = false
+        notchHintItem.isHidden = true
+        menu.addItem(notchHintItem)
         menu.addItem(NSMenuItem(title: "Install Claude Code Hooks…",
                                 action: #selector(installHooks), keyEquivalent: ""))
         menu.addItem(.separator())
@@ -102,7 +108,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             self?.refreshHistory()
         }
 
-        if notchItem.state == .on, NotchGeometry.hasNotch { showNotch() }
+        if notchItem.state == .on { showNotch() }
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -126,7 +132,23 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func quit() { NSApplication.shared.terminate(nil) }
 
-    @objc private func screensChanged() { notch?.layout() }
+    /// A resolution change can flip the presentation between notch and pill, so
+    /// re-lay out and refresh the menu label rather than assuming the mode holds.
+    @objc private func screensChanged() {
+        notch?.layout()
+        switch NotchGeometry.availability() {
+        case .available:
+            notchItem.title = "Show in Notch"
+            notchHintItem.isHidden = true
+        case .hiddenByResolution(let current, let suggestion):
+            notchItem.title = "Show Overlay (pill — notch unusable at \(current))"
+            notchHintItem.title = suggestion.map { "Switch to \($0) to use the notch itself" } ?? ""
+            notchHintItem.isHidden = notchHintItem.title.isEmpty
+        case .noNotch:
+            notchItem.title = "Show Overlay (pill)"
+            notchHintItem.isHidden = true
+        }
+    }
 
     @objc private func toggleNotch() {
         let on = notchItem.state != .on

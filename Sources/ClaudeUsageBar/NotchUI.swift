@@ -100,8 +100,22 @@ final class NotchWindow: NSPanel {
     private var trackingArea: NSTrackingArea?
     private(set) var isExpanded = false
 
-    /// Collapsed height matches the menu bar so the wings sit level with it.
-    private let collapsedHeight: CGFloat = 24
+    /// How the overlay is presented on the current display.
+    enum Mode {
+        /// Wings flanking a real, addressable notch.
+        case notch(width: CGFloat, height: CGFloat)
+        /// No addressable notch (e.g. a scaled mode with no taller sibling):
+        /// a rounded pill hanging just below the menu bar instead.
+        case floating
+    }
+
+    private var mode: Mode = .floating
+
+    /// Collapsed height for the floating pill. In notch mode the height comes
+    /// from the display's own safe-area inset — hard-coding 24 left the wings
+    /// short of a 56pt menu bar, with a visible seam beneath them.
+    private let floatingHeight: CGFloat = 26
+    private let floatingWidth: CGFloat = 190
     private let expandedHeight: CGFloat = 358
     private let expandedWidth: CGFloat = 460
     /// How far past the notch the collapsed wings extend on each side.
@@ -135,14 +149,37 @@ final class NotchWindow: NSPanel {
 
     func layout() {
         guard let screen = NotchGeometry.preferredScreen else { return }
-        let notch = NotchGeometry.notchWidth(of: screen) ?? 200
-        content.notchWidth = notch
+
+        if let notch = NotchGeometry.notchWidth(of: screen) {
+            // The notch strip is exactly as tall as the safe-area inset.
+            mode = .notch(width: notch, height: screen.safeAreaInsets.top)
+        } else {
+            mode = .floating
+        }
+        content.mode = mode
         content.isExpanded = isExpanded
 
-        let width = isExpanded ? max(expandedWidth, notch + 2 * wingWidth) : notch + 2 * wingWidth
-        let height = isExpanded ? expandedHeight : collapsedHeight
+        let width: CGFloat
+        let height: CGFloat
+        let top: CGFloat
+
+        switch mode {
+        case .notch(let notchWidth, let notchHeight):
+            width = isExpanded ? max(expandedWidth, notchWidth + 2 * wingWidth)
+                               : notchWidth + 2 * wingWidth
+            height = isExpanded ? expandedHeight : notchHeight
+            top = screen.frame.maxY
+        case .floating:
+            width = isExpanded ? expandedWidth : floatingWidth
+            height = isExpanded ? expandedHeight : floatingHeight
+            // Hang below the menu bar rather than under it: on a display with no
+            // addressable notch the menu bar occupies the very top row, and an
+            // overlay there would fight it for the same pixels.
+            top = screen.frame.maxY - (screen.frame.maxY - screen.visibleFrame.maxY) - 4
+        }
+
         let frame = NSRect(x: screen.frame.midX - width / 2,
-                           y: screen.frame.maxY - height,
+                           y: top - height,
                            width: width,
                            height: height)
         setFrame(frame, display: true)
@@ -175,8 +212,14 @@ final class NotchWindow: NSPanel {
 
 final class NotchContentView: NSView {
     var model = NotchModel()
-    var notchWidth: CGFloat = 200
+    var mode: NotchWindow.Mode = .floating
     var isExpanded = false
+
+    /// Kept for the offscreen render entry point, which draws a sample notch.
+    var notchWidth: CGFloat {
+        if case .notch(let w, _) = mode { return w }
+        return 200
+    }
 
     override var isFlipped: Bool { true }
 
@@ -186,58 +229,92 @@ final class NotchContentView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.current?.cgContext.setShouldAntialias(true)
-        if isExpanded { drawExpanded() } else { drawCollapsed() }
+        if isExpanded { drawExpanded() } else {
+            switch mode {
+            case .notch: drawWings()
+            case .floating: drawPill()
+            }
+        }
     }
 
     // MARK: Collapsed
 
-    /// Two "wings" flanking the physical notch, painted the same black so they
-    /// read as an extension of it rather than a floating window.
-    private func drawCollapsed() {
+    /// Two "wings" flanking the physical notch.
+    ///
+    /// Deliberately NO background fill. The menu bar is translucent and picks up
+    /// the wallpaper's tint, so painting the wings solid black made them read as
+    /// two rectangles stuck on top of it. Drawing only the text lets them sit in
+    /// the menu bar as if they belonged to it.
+    private func drawWings() {
         let wing = (bounds.width - notchWidth) / 2
         guard wing > 0 else { return }
 
         let left = NSRect(x: 0, y: 0, width: wing, height: bounds.height)
         let right = NSRect(x: bounds.width - wing, y: 0, width: wing, height: bounds.height)
-        for (rect, corner) in [(left, true), (right, false)] {
-            let path = NSBezierPath()
-            let r: CGFloat = 8
-            if corner {
-                // Left wing: rounded on its outer (left) bottom corner only.
-                path.move(to: NSPoint(x: rect.maxX, y: rect.minY))
-                path.line(to: NSPoint(x: rect.minX, y: rect.minY))
-                path.line(to: NSPoint(x: rect.minX, y: rect.maxY - r))
-                path.appendArc(withCenter: NSPoint(x: rect.minX + r, y: rect.maxY - r),
-                               radius: r, startAngle: 180, endAngle: 90, clockwise: true)
-                path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
-            } else {
-                path.move(to: NSPoint(x: rect.minX, y: rect.minY))
-                path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
-                path.line(to: NSPoint(x: rect.maxX, y: rect.maxY - r))
-                path.appendArc(withCenter: NSPoint(x: rect.maxX - r, y: rect.maxY - r),
-                               radius: r, startAngle: 0, endAngle: 90, clockwise: false)
-                path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
-            }
-            path.close()
-            NSColor.black.setFill()
-            path.fill()
-        }
 
-        // Left wing: session %. Right wing: weekly %, or the live activity when
-        // Claude is doing something — that is the more interesting fact.
         let leftText = model.session.map { "S \($0.percent)%" } ?? "S —"
-        draw(leftText, in: left.insetBy(dx: 8, dy: 4), align: .left, size: 11,
-             color: colour(for: model.session?.percent))
+        drawCentred(leftText, in: left.insetBy(dx: 10, dy: 0), align: .left, size: 12,
+                    color: colour(for: model.session?.percent))
 
         if model.activity != .idle {
-            draw(model.activity.label, in: right.insetBy(dx: 8, dy: 4), align: .right, size: 10,
-                 color: model.activity.isBusy ? NSColor.systemGreen : dim)
+            drawCentred(model.activity.label, in: right.insetBy(dx: 10, dy: 0),
+                        align: .right, size: 11,
+                        color: model.activity.isBusy ? NSColor.systemGreen : dim)
             if model.activity.isBusy { drawPulse(in: right) }
         } else {
             let rightText = model.weekly.map { "W \($0.percent)%" } ?? ""
-            draw(rightText, in: right.insetBy(dx: 8, dy: 4), align: .right, size: 11,
-                 color: colour(for: model.weekly?.percent))
+            drawCentred(rightText, in: right.insetBy(dx: 10, dy: 0), align: .right, size: 12,
+                        color: colour(for: model.weekly?.percent))
         }
+    }
+
+    /// Collapsed presentation with no notch to hug: a rounded pill under the menu
+    /// bar. This is what a display running a mode with no addressable notch gets,
+    /// and it is a deliberate design rather than a degraded one — the expanded
+    /// panel is identical either way.
+    private func drawPill() {
+        let pill = bounds.insetBy(dx: 0, dy: 1)
+        let path = NSBezierPath(roundedRect: pill,
+                                xRadius: pill.height / 2, yRadius: pill.height / 2)
+        NSColor.black.withAlphaComponent(0.88).setFill()
+        path.fill()
+        faint.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        let inner = pill.insetBy(dx: 14, dy: 0)
+        if model.activity != .idle {
+            // The pill puts the quota and the activity on ONE line, so the pulse
+            // dot has to live in the activity's own half. Anchoring it to the
+            // pill's left edge (as the wings do, where the activity has a wing to
+            // itself) drew it straight through the "S 41%" text.
+            let activityRect = NSRect(x: inner.midX, y: inner.minY,
+                                      width: inner.width / 2, height: inner.height)
+            drawCentred(model.activity.label, in: activityRect, align: .right, size: 11,
+                        color: model.activity.isBusy ? NSColor.systemGreen : dim)
+            if model.activity.isBusy { drawPulse(in: activityRect) }
+            drawCentred(model.session.map { "S \($0.percent)%" } ?? "S —",
+                        in: inner, align: .left, size: 12,
+                        color: colour(for: model.session?.percent))
+        } else {
+            drawCentred(model.session.map { "S \($0.percent)%" } ?? "S —",
+                        in: inner, align: .left, size: 12,
+                        color: colour(for: model.session?.percent))
+            drawCentred(model.weekly.map { "W \($0.percent)%" } ?? "",
+                        in: inner, align: .right, size: 12,
+                        color: colour(for: model.weekly?.percent))
+        }
+    }
+
+    /// Draws one line vertically centred in `rect`. The wings span the full menu
+    /// bar height, so text has to be centred rather than pinned to the top.
+    private func drawCentred(_ text: String, in rect: NSRect, align: NSTextAlignment,
+                             size: CGFloat, color: NSColor) {
+        guard !text.isEmpty else { return }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .medium)
+        let line = NSRect(x: rect.minX, y: rect.midY - font.capHeight,
+                          width: rect.width, height: font.ascender - font.descender)
+        draw(text, in: line, align: align, size: size, color: color)
     }
 
     /// A small breathing dot, so "working" reads at a glance without animation
@@ -479,14 +556,21 @@ extension NotchWindow {
     /// can be checked in a build step instead of by eye. Invoked with
     /// `ClaudeUsageBar --render-notch <dir>`.
     static func renderSamples(model: NotchModel, to directory: String) throws {
-        let notchWidth = NotchGeometry.preferredScreen.flatMap { NotchGeometry.notchWidth(of: $0) } ?? 200
-        for (name, expanded, size) in [
-            ("notch-collapsed", false, NSSize(width: notchWidth + 176, height: 24)),
-            ("notch-expanded",  true,  NSSize(width: 460, height: 358)),
+        let screen = NotchGeometry.preferredScreen
+        let notchWidth = screen.flatMap { NotchGeometry.notchWidth(of: $0) } ?? 200
+        // Height of a real notch strip, so the sample matches what ships rather
+        // than a guess — 24 here hid a seam that only showed on the display.
+        let notchHeight = screen.map { $0.safeAreaInsets.top > 0 ? $0.safeAreaInsets.top : 38 } ?? 38
+
+        for (name, mode, expanded, size) in [
+            ("notch-collapsed", Mode.notch(width: notchWidth, height: notchHeight), false,
+             NSSize(width: notchWidth + 176, height: notchHeight)),
+            ("notch-floating", Mode.floating, false, NSSize(width: 190, height: 26)),
+            ("notch-expanded", Mode.floating, true, NSSize(width: 460, height: 358)),
         ] {
             let view = NotchContentView(frame: NSRect(origin: .zero, size: size))
             view.model = model
-            view.notchWidth = notchWidth
+            view.mode = mode
             view.isExpanded = expanded
 
             guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
