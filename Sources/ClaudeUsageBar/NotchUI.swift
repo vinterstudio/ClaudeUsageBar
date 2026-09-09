@@ -119,7 +119,10 @@ final class NotchWindow: NSPanel {
     /// Height of the panel's usable content. The window itself is taller in
     /// notch mode by the height of the notch band, which is unusable — the panel
     /// is flush with the screen top, so its first rows sit BEHIND the notch.
-    private let expandedContentHeight: CGFloat = 358
+    /// 371 leaves a 16pt margin below the last project row. Measured, not
+    /// guessed: at 358 the final row's share bar ended 3pt from the edge and sat
+    /// flush against it on the display.
+    private let expandedContentHeight: CGFloat = 371
     private let expandedWidth: CGFloat = 460
     /// How far past the notch the collapsed wings extend on each side. Sized for
     /// "S 100% · W 100%" on the left wing at 12pt, the widest it can get.
@@ -642,7 +645,7 @@ extension NotchWindow {
             // band the real panel does — a floating sample would hide exactly
             // the defect that put the reset time behind the notch.
             ("notch-expanded", Mode.notch(width: notchWidth, height: notchHeight), true,
-             NSSize(width: 460, height: 358 + notchHeight)),
+             NSSize(width: 460, height: 371 + notchHeight)),
         ] {
             let view = NotchContentView(frame: NSRect(origin: .zero, size: size))
             view.model = model
