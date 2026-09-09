@@ -313,14 +313,11 @@ final class NotchContentView: NSView {
 
         let inner = pill.insetBy(dx: 14, dy: 0)
         if model.activity != .idle {
-            // The pill puts the quota and the activity on ONE line, so the pulse
-            // dot has to live in the activity's own half. Anchoring it to the
-            // pill's left edge (as the wings do, where the activity has a wing to
-            // itself) drew it straight through the "S 41%" text.
-            let activityRect = NSRect(x: inner.midX, y: inner.minY,
-                                      width: inner.width / 2, height: inner.height)
-            // Too narrow for the tool name alongside both figures, so the pill
-            // keeps the numbers and reduces activity to the pulsing dot.
+            // The pill puts both quota figures on ONE line, leaving no room for
+            // the tool name, so activity is reduced to the pulsing dot — centred,
+            // between the two numbers. Anchoring it to the pill's left edge (as
+            // the wings do, where activity has a wing to itself) drew it straight
+            // through the "S 41%" text.
             drawCentred(model.session.map { "S \($0.percent)%" } ?? "S —",
                         in: inner, align: .left, size: 12,
                         color: colour(for: model.session?.percent))
