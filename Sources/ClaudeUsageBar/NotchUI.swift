@@ -89,48 +89,57 @@ enum NotchGeometry {
         NSScreen.screens.first { notchWidth(of: $0) != nil } ?? NSScreen.main
     }
 
-    /// Whether a full-screen app currently covers the notch screen.
+    /// Whether a full-screen app currently owns the space on the notch screen.
     ///
-    /// The overlay sits above `.mainMenuWindow` with `.fullScreenAuxiliary`, so
-    /// it keeps drawing over a full-screen app after the menu bar has slid away
-    /// — two usage figures hanging over a video. Rather than ask AppKit (a
-    /// window in ANOTHER app's full-screen space is not something `NSScreen`
-    /// reports), look at the on-screen window list: a full-screen app owns a
-    /// normal-level window whose bounds are the whole display, menu bar strip
-    /// included. `.optionOnScreenOnly` returns bounds and layer without the
-    /// screen-recording permission — only window *names* are gated.
-    static func isCoveredByFullScreenApp(screen: NSScreen) -> Bool {
-        guard let primary = NSScreen.screens.first else { return false }
-        // CGWindow bounds are top-left origin, measured from the primary
-        // display; NSScreen frames are bottom-left origin.
-        let target = CGRect(x: screen.frame.minX,
-                            y: primary.frame.maxY - screen.frame.maxY,
-                            width: screen.frame.width,
-                            height: screen.frame.height)
+    /// Measured, not assumed. Two plausible approaches were tried and filmed
+    /// before this one, so do not swap it back:
+    ///
+    /// - Scanning `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` for a
+    ///   display-sized window. Sampled once a second across 35 seconds of Chrome
+    ///   in full screen, its window appeared in exactly ONE sample. The list
+    ///   flickers, so a poll on it hides the overlay and puts it straight back.
+    ///   `NSMenu.menuBarVisible()` and `visibleFrame` never moved at all.
+    /// - Dropping `.fullScreenAuxiliary` so AppKit keeps the window off the
+    ///   space by itself. It does not; the overlay simply stayed visible.
+    ///
+    /// The window server's own space type is steady: 4 for a full-screen space,
+    /// 0 for a desktop, with no intermediate readings. That costs a private
+    /// CoreGraphics call — the one menu-bar utilities like Ice use — acceptable
+    /// here because nothing ships to the App Store.
+    static func isFullScreenSpaceActive(on screen: NSScreen) -> Bool {
+        guard let displays = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()) as? [[String: Any]]
+        else { return false }
 
-        guard let windows = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
-        ) as? [[String: Any]] else { return false }
-
-        let tolerance: CGFloat = 2
-        for window in windows {
-            // Layer 0 is the ordinary app window level. The Dock's full-screen
-            // backdrop and the menu bar live on other layers, and counting them
-            // would report full screen on an ordinary desktop.
-            guard (window[kCGWindowLayer as String] as? Int) == 0,
-                  let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
-                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary)
-            else { continue }
-            if abs(bounds.minX - target.minX) <= tolerance,
-               abs(bounds.minY - target.minY) <= tolerance,
-               abs(bounds.width - target.width) <= tolerance,
-               abs(bounds.height - target.height) <= tolerance {
-                return true
-            }
+        let uuid = displayUUID(of: screen)
+        for display in displays {
+            let identifier = display["Display Identifier"] as? String
+            // Match the notch display; a single-display Mac reports "Main".
+            if let uuid, let identifier, identifier != uuid, identifier != "Main" { continue }
+            guard let current = display["Current Space"] as? [String: Any],
+                  let type = current["type"] as? Int else { continue }
+            if type == fullScreenSpaceType { return true }
         }
         return false
     }
+
+    /// The window server's space type for a full-screen space; 0 is a desktop.
+    private static let fullScreenSpaceType = 4
+
+    private static func displayUUID(of screen: NSScreen) -> String? {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+              let uuid = CGDisplayCreateUUIDFromDisplayID(CGDirectDisplayID(number.uint32Value))
+        else { return nil }
+        return CFUUIDCreateString(nil, uuid.takeRetainedValue()) as String
+    }
 }
+
+// The window server's space list is not exposed publicly. See
+// `isFullScreenSpaceActive(on:)` for the public APIs that were tried first.
+private typealias CGSConnectionID = UInt32
+@_silgen_name("CGSMainConnectionID")
+private func CGSMainConnectionID() -> CGSConnectionID
+@_silgen_name("CGSCopyManagedDisplaySpaces")
+private func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> CFArray
 
 // MARK: - Window
 
@@ -138,6 +147,23 @@ enum NotchGeometry {
 /// figures either side of the notch cut-out; hovering expands it into a panel
 /// with the 30-day history.
 final class NotchWindow: NSPanel {
+    /// Deliberately joins NO other space.
+    ///
+    /// `.canJoinAllSpaces` and `.fullScreenAuxiliary` are what carried the
+    /// overlay into a full-screen space, and it cannot be taken back out once it
+    /// is there. Filmed at 60fps and confirmed with the app quit: the window
+    /// server composites a cached surface of the window into the new space about
+    /// 270ms in, and that happens whether the window is transparent, ordered
+    /// out, or has just had those behaviours removed — the surface is captured
+    /// before the space notification or the space-type flip reaches us, so no
+    /// reactive hiding can be quick enough. A window that never joins the space
+    /// has nothing there to composite.
+    ///
+    /// The cost is that the overlay stays on the space it was created on and is
+    /// absent from other desktop spaces.
+    static let normalCollectionBehavior: NSWindow.CollectionBehavior =
+        [.stationary, .ignoresCycle]
+
     private let content = NotchContentView()
     private var trackingArea: NSTrackingArea?
     private(set) var isExpanded = false
@@ -187,7 +213,7 @@ final class NotchWindow: NSPanel {
         hasShadow = false
         // Above the menu bar, so the panel can hang over it rather than under.
         level = .init(Int(CGWindowLevelForKey(.mainMenuWindow)) + 2)
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        collectionBehavior = Self.normalCollectionBehavior
         isMovable = false
         // A menu-bar accessory must never steal focus from the app in front.
         becomesKeyOnlyIfNeeded = true

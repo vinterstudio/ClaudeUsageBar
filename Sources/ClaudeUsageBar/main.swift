@@ -50,11 +50,14 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let activity = ActivityMonitor()
     private var notch: NotchWindow?
-    /// Polls for a full-screen app covering the notch screen.
+    /// Polls the notch display's space type.
     private var fullScreenTimer: Timer?
-    /// True while the overlay is ordered out because an app is full screen.
+    /// True while the overlay is ordered out because a full-screen space is up.
     /// Separate from the "Show in Notch" preference, which it never changes.
     private var notchHiddenByFullScreen = false
+    /// Consecutive polls that have reported no full-screen space. The overlay
+    /// comes back only once this clears `showAfterClearPolls`.
+    private var clearPolls = 0
     /// Repaints the notch while Claude is busy, to drive the pulse.
     private var pulseTimer: Timer?
     /// The menu bar's lightness can change with the wallpaper, which raises no
@@ -124,14 +127,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
-        // Entering or leaving full screen is a space change, which is the cheap
-        // signal; the timer is the safety net for the cases it misses (an app
-        // that resizes into full screen on the SAME space, or a space switch
-        // that lands before the window list has settled).
+        // Entering or leaving full screen is a space change; the poll covers an
+        // app that resizes into full screen on the SAME space.
         NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(syncNotchVisibility),
+            self, selector: #selector(spaceChanged),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-        fullScreenTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        fullScreenTimer = Timer.scheduledTimer(withTimeInterval: pollStep, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.syncNotchVisibility() }
         }
     }
@@ -274,26 +275,87 @@ final class AppController: NSObject, NSApplicationDelegate {
         w.menuBarIsLight = menuBarIsLight
         notch = w
         notchHiddenByFullScreen = false
+        clearPolls = 0
+        w.alphaValue = 1
+        w.ignoresMouseEvents = false
         w.orderFrontRegardless()
         syncNotchVisibility()
     }
 
-    /// Orders the overlay out while a full-screen app covers the notch display,
-    /// and back in when it leaves. The menu bar hides itself in full screen; the
-    /// overlay sits above it and would not, so it needs telling.
+    /// How often the space type is sampled.
+    private let pollStep: TimeInterval = 0.25
+    /// Clear polls required before the overlay returns — 1s of steady desktop.
+    private let showAfterClearPolls = 4
+
+    /// Orders the overlay out while a full-screen space owns the notch display,
+    /// and back in once one no longer does.
+    ///
+    /// Asymmetric on purpose, and the asymmetry is the whole fix. Hiding happens
+    /// on the first full-screen reading. Showing waits for several consecutive
+    /// clear readings, because during the enter animation the space type reads 0
+    /// for a moment after the overlay has already been hidden — acting on that
+    /// single reading flashed the overlay across the black, which is visible
+    /// frame by frame in the 60fps recording that found it.
     @MainActor
     @objc private func syncNotchVisibility() {
         guard let w = notch, let screen = NotchGeometry.preferredScreen else { return }
-        let covered = NotchGeometry.isCoveredByFullScreenApp(screen: screen)
-        guard covered != notchHiddenByFullScreen else { return }
-        notchHiddenByFullScreen = covered
-        if covered {
-            // Collapse first: ordering an expanded panel out and back in would
-            // bring the big panel back with no pointer inside it to dismiss it.
+
+        if NotchGeometry.isFullScreenSpaceActive(on: screen) {
+            clearPolls = 0
+            guard !notchHiddenByFullScreen else { return }
+            notchHiddenByFullScreen = true
+            // Collapse first: restoring an expanded panel would bring the big
+            // panel back with no pointer inside it to dismiss it.
             w.setExpanded(false)
+            // None of this is what keeps the overlay out of a full-screen
+            // space — `normalCollectionBehavior` is. Alpha and `orderOut` were
+            // both tried as the fix and both failed identically, so this is
+            // only here for the same-space case, where an app fills the screen
+            // without a new space being created and there is no compositor
+            // surface involved.
+            w.alphaValue = 0
+            // A transparent window would still take the hover that expands it.
+            w.ignoresMouseEvents = true
             w.orderOut(nil)
         } else {
+            guard notchHiddenByFullScreen else { return }
+            clearPolls += 1
+            guard clearPolls >= showAfterClearPolls else { return }
+            notchHiddenByFullScreen = false
+            clearPolls = 0
+            w.ignoresMouseEvents = false
+            w.alphaValue = 1
             w.orderFrontRegardless()
+        }
+    }
+
+    /// Re-binds the overlay to whichever desktop space is now in front.
+    ///
+    /// The window joins no space of its own accord — that is what stops it being
+    /// carried into full screen — so without this it would stay on the desktop it
+    /// was created on.
+    ///
+    /// A window binds to a space when it is CREATED, and ordering a
+    /// non-activating panel out and back in does not re-bind it — tried, and the
+    /// overlay stayed on the first desktop. So the window is rebuilt on the new
+    /// space instead; it holds no state beyond the model, which `showNotch()`
+    /// reapplies.
+    ///
+    /// Deferred past the switch animation: creating it mid-animation is what
+    /// gives the window server a surface to cache, which is the whole cause of
+    /// the flash this avoids.
+    @MainActor
+    @objc private func spaceChanged() {
+        syncNotchVisibility()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.notchItem.state == .on,
+                      let screen = NotchGeometry.preferredScreen,
+                      !NotchGeometry.isFullScreenSpaceActive(on: screen) else { return }
+                self.notch?.orderOut(nil)
+                self.notch = nil
+                self.showNotch()
+            }
         }
     }
 
@@ -301,6 +363,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         notch?.orderOut(nil)
         notch = nil
         notchHiddenByFullScreen = false
+        clearPolls = 0
         pulseTimer?.invalidate()
         pulseTimer = nil
     }
@@ -655,3 +718,5 @@ app.setActivationPolicy(.accessory)   // menu bar only, no dock icon
 let controller = AppController()
 app.delegate = controller
 app.run()
+
+
