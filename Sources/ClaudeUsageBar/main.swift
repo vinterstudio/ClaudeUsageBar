@@ -50,6 +50,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let activity = ActivityMonitor()
     private var notch: NotchWindow?
+    /// Polls for a full-screen app covering the notch screen.
+    private var fullScreenTimer: Timer?
+    /// True while the overlay is ordered out because an app is full screen.
+    /// Separate from the "Show in Notch" preference, which it never changes.
+    private var notchHiddenByFullScreen = false
     /// Repaints the notch while Claude is busy, to drive the pulse.
     private var pulseTimer: Timer?
     /// The menu bar's lightness can change with the wallpaper, which raises no
@@ -118,6 +123,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
+
+        // Entering or leaving full screen is a space change, which is the cheap
+        // signal; the timer is the safety net for the cases it misses (an app
+        // that resizes into full screen on the SAME space, or a space switch
+        // that lands before the window list has settled).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(syncNotchVisibility),
+            name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        fullScreenTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncNotchVisibility() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -256,13 +272,35 @@ final class AppController: NSObject, NSApplicationDelegate {
         let w = NotchWindow()
         w.model = model
         w.menuBarIsLight = menuBarIsLight
-        w.orderFrontRegardless()
         notch = w
+        notchHiddenByFullScreen = false
+        w.orderFrontRegardless()
+        syncNotchVisibility()
+    }
+
+    /// Orders the overlay out while a full-screen app covers the notch display,
+    /// and back in when it leaves. The menu bar hides itself in full screen; the
+    /// overlay sits above it and would not, so it needs telling.
+    @MainActor
+    @objc private func syncNotchVisibility() {
+        guard let w = notch, let screen = NotchGeometry.preferredScreen else { return }
+        let covered = NotchGeometry.isCoveredByFullScreenApp(screen: screen)
+        guard covered != notchHiddenByFullScreen else { return }
+        notchHiddenByFullScreen = covered
+        if covered {
+            // Collapse first: ordering an expanded panel out and back in would
+            // bring the big panel back with no pointer inside it to dismiss it.
+            w.setExpanded(false)
+            w.orderOut(nil)
+        } else {
+            w.orderFrontRegardless()
+        }
     }
 
     private func hideNotch() {
         notch?.orderOut(nil)
         notch = nil
+        notchHiddenByFullScreen = false
         pulseTimer?.invalidate()
         pulseTimer = nil
     }

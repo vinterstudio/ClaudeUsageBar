@@ -88,6 +88,48 @@ enum NotchGeometry {
     static var preferredScreen: NSScreen? {
         NSScreen.screens.first { notchWidth(of: $0) != nil } ?? NSScreen.main
     }
+
+    /// Whether a full-screen app currently covers the notch screen.
+    ///
+    /// The overlay sits above `.mainMenuWindow` with `.fullScreenAuxiliary`, so
+    /// it keeps drawing over a full-screen app after the menu bar has slid away
+    /// — two usage figures hanging over a video. Rather than ask AppKit (a
+    /// window in ANOTHER app's full-screen space is not something `NSScreen`
+    /// reports), look at the on-screen window list: a full-screen app owns a
+    /// normal-level window whose bounds are the whole display, menu bar strip
+    /// included. `.optionOnScreenOnly` returns bounds and layer without the
+    /// screen-recording permission — only window *names* are gated.
+    static func isCoveredByFullScreenApp(screen: NSScreen) -> Bool {
+        guard let primary = NSScreen.screens.first else { return false }
+        // CGWindow bounds are top-left origin, measured from the primary
+        // display; NSScreen frames are bottom-left origin.
+        let target = CGRect(x: screen.frame.minX,
+                            y: primary.frame.maxY - screen.frame.maxY,
+                            width: screen.frame.width,
+                            height: screen.frame.height)
+
+        guard let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+
+        let tolerance: CGFloat = 2
+        for window in windows {
+            // Layer 0 is the ordinary app window level. The Dock's full-screen
+            // backdrop and the menu bar live on other layers, and counting them
+            // would report full screen on an ordinary desktop.
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
+                  let raw = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary)
+            else { continue }
+            if abs(bounds.minX - target.minX) <= tolerance,
+               abs(bounds.minY - target.minY) <= tolerance,
+               abs(bounds.width - target.width) <= tolerance,
+               abs(bounds.height - target.height) <= tolerance {
+                return true
+            }
+        }
+        return false
+    }
 }
 
 // MARK: - Window
