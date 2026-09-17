@@ -27,6 +27,48 @@ enum ActivityState: Equatable {
     }
 }
 
+/// How the activity indicator moves. Keyed off the tool so the *kind* of work
+/// reads at a glance, before the label is read.
+enum ActivityMotion {
+    case breathe      // thinking — no tool yet
+    case sweep        // reading/searching: scans back and forth
+    case tick         // a command running: travels left to right, repeatedly
+    case blink        // writing: discrete on/off, one edit at a time
+    case orbit        // network: circles
+    case attention    // waiting on you: a double knock, then a pause
+    case still        // done, or idle
+}
+
+extension ActivityState {
+    var motion: ActivityMotion {
+        switch self {
+        case .idle, .done: return .still
+        case .thinking: return .breathe
+        case .waiting: return .attention
+        case .working(_, let tool): return Self.motion(forTool: tool)
+        }
+    }
+
+    /// Matched on a lowercased prefix so unseen variants (MultiEdit, NotebookRead)
+    /// land on the right motion instead of the default.
+    private static func motion(forTool tool: String) -> ActivityMotion {
+        let name = tool.lowercased()
+        if name.hasPrefix("bash") || name.hasPrefix("shell") || name.hasPrefix("run") { return .tick }
+        if name.hasPrefix("read") || name.hasPrefix("grep") || name.hasPrefix("glob")
+            || name.hasPrefix("search") || name.hasPrefix("ls") { return .sweep }
+        if name.hasPrefix("edit") || name.hasPrefix("write") || name.hasPrefix("multiedit")
+            || name.hasPrefix("notebook") || name.hasPrefix("apply") { return .blink }
+        if name.hasPrefix("web") || name.hasPrefix("fetch") || name.hasPrefix("mcp") { return .orbit }
+        return .breathe
+    }
+
+    /// Amber for the one state that is asking something of you; green otherwise.
+    var isRequestingAttention: Bool {
+        if case .waiting = self { return true }
+        return false
+    }
+}
+
 /// Listens on a Unix domain socket for one-line JSON events posted by the
 /// Claude Code hook script (`hooks/notify-usage-bar.sh`).
 ///

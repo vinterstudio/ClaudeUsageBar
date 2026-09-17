@@ -40,6 +40,10 @@ MacBook's notch — or hangs below the menu bar as a pill on any other display.
   `~/.claude/projects/**/*.jsonl`. Hover the overlay to expand it.
 - **Live activity (optional)** — the overlay can show what Claude Code is doing right
   now (thinking / running a tool / waiting on you), via a local hook.
+- **Pulses on change** — a quota figure brightens and swells once, briefly, when its
+  percentage ticks over, so a number moving is noticeable without watching for it.
+- **Out of the way in full screen** — the overlay is absent from full-screen apps and
+  reappears when you leave. It follows you between desktop spaces.
 - **Quiet by design** — no dock icon, no login prompts, no network call in the normal
   path, and nothing sent anywhere.
 
@@ -228,6 +232,20 @@ resolution to switch to; the overlay falls back to pill mode meanwhile.
 </details>
 
 <details>
+<summary>The overlay is missing on a second desktop, or appears over a full-screen app</summary>
+
+The overlay deliberately joins **no** space. `.canJoinAllSpaces` and
+`.fullScreenAuxiliary` carry a window into a full-screen space, and once it is there it
+cannot be taken back out: the window server composites a cached surface of it partway
+through the transition, whatever the app does to the window afterwards. Instead the
+window is rebuilt on each desktop space as you arrive, shortly after the switch
+animation — so it is present on every desktop and never enters a full-screen space. An
+app that fills the screen *without* creating a new space is caught separately, by
+polling the display's space type.
+
+</details>
+
+<details>
 <summary>Repeated "wants to access key Claude Code-credentials" prompts</summary>
 
 Two causes, both fixed. With an expired token the credential cache was never populated,
@@ -262,12 +280,18 @@ swift build -c release && ./build-app.sh      # release + bundle
 which is how the overlay is verified in a build step rather than by eye. Use `--demo` for
 anything you publish — a default render is a picture of your own projects and volumes.
 
+`--render-motion` does the same job for the activity indicator. The glyph is a pure
+function of wall-clock time, so the renderer injects a fake clock and lays out twelve
+frames per motion as stills — otherwise motion is the one thing no headless check can
+see, and "it animates" would rest on nobody having looked.
+
 | Flag | Purpose |
 |------|---------|
 | `--doctor` | Diagnose source, credentials, notch, history, socket |
 | `--doctor --check-credentials` | Also inspect the Keychain item (may prompt) |
 | `--doctor --shape` | Print the credential JSON's structure, values redacted |
 | `--render-notch <dir> [--demo]` | Render overlay PNGs headlessly |
+| `--render-motion <dir>` | Render a filmstrip of every activity motion |
 
 ## Status & expectations
 

@@ -372,11 +372,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         model.activity = state
         notch?.model = model
         // Only run a repaint ticker while there is something moving to draw.
-        if state.isBusy, notch != nil, pulseTimer == nil {
-            pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+        // `waiting` animates too now — it is the state that wants noticing — and
+        // 12fps was enough for a dot fading in place but visibly stepped once the
+        // glyph started travelling, so the motions get 30.
+        let animates = state.isBusy || state.isRequestingAttention
+        if animates, notch != nil, pulseTimer == nil {
+            pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
                 self?.notch?.contentView?.needsDisplay = true
             }
-        } else if !state.isBusy {
+        } else if !animates {
             pulseTimer?.invalidate()
             pulseTimer = nil
             notch?.contentView?.needsDisplay = true
@@ -687,6 +691,12 @@ if CommandLine.arguments.contains("--doctor") {
 // Verification entry point: render the notch to PNGs and exit, so the drawing
 // code can be checked without a display or screen-recording permission.
 let args = CommandLine.arguments
+if let i = args.firstIndex(of: "--render-motion"), i + 1 < args.count {
+    try NotchWindow.renderMotionStrip(to: args[i + 1])
+    print("Rendered motion filmstrip to \(args[i + 1])/motion-strip.png")
+    exit(0)
+}
+
 if let i = args.firstIndex(of: "--render-notch"), i + 1 < args.count {
     // `--demo` renders invented data instead of yours. The default deliberately
     // uses the live snapshot — hardcoded values have twice hidden a defect that

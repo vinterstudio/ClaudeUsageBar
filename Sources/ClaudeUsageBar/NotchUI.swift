@@ -226,7 +226,30 @@ final class NotchWindow: NSPanel {
 
     var model: NotchModel {
         get { content.model }
-        set { content.model = newValue; content.needsDisplay = true }
+        set {
+            content.model = newValue
+            content.needsDisplay = true
+            startChangePulseTickerIfNeeded()
+        }
+    }
+
+    /// Frames for the change-pulse.
+    ///
+    /// The controller only tickers while Claude is busy, and a quota figure
+    /// usually changes when it is not — so without this the pulse would render
+    /// a single frame at whatever phase the next repaint happened to catch.
+    private var changePulseTicker: Timer?
+
+    private func startChangePulseTickerIfNeeded() {
+        guard content.hasActiveChangePulse, changePulseTicker == nil else { return }
+        changePulseTicker = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            self.content.needsDisplay = true
+            if !self.content.hasActiveChangePulse {
+                timer.invalidate()
+                self.changePulseTicker = nil
+            }
+        }
     }
 
     /// Set from the status item's appearance; only affects the collapsed wings.
@@ -307,7 +330,46 @@ final class NotchWindow: NSPanel {
 // MARK: - Drawing
 
 final class NotchContentView: NSView {
-    var model = NotchModel()
+    var model = NotchModel() {
+        didSet { noteChanges(since: oldValue) }
+    }
+
+    /// When each figure last changed, so it can pulse once on the way in.
+    private var sessionChangedAt: Date?
+    private var weeklyChangedAt: Date?
+    /// How long one change-pulse lasts.
+    static let changePulseDuration: TimeInterval = 0.55
+
+    /// A figure that ticks up is easy to miss in a strip of text this small, so
+    /// it brightens and swells once when the number changes. The percentage is
+    /// the trigger, not the underlying window — the readout only shows whole
+    /// percent, so pulsing on anything finer would fire with nothing visible.
+    private func noteChanges(since old: NotchModel) {
+        if model.session?.percent != old.session?.percent, model.session != nil {
+            sessionChangedAt = Date()
+        }
+        if model.weekly?.percent != old.weekly?.percent, model.weekly != nil {
+            weeklyChangedAt = Date()
+        }
+    }
+
+    /// True while either figure is mid-pulse, so the window knows to keep
+    /// redrawing — nothing else drives frames when Claude is idle.
+    var hasActiveChangePulse: Bool {
+        [sessionChangedAt, weeklyChangedAt].contains { start in
+            guard let start else { return false }
+            return Date().timeIntervalSince(start) < Self.changePulseDuration
+        }
+    }
+
+    /// 0 at rest, rising to 1 mid-pulse and back — a half sine, so it starts and
+    /// ends still rather than snapping back.
+    private func changePulse(_ start: Date?) -> CGFloat {
+        guard let start else { return 0 }
+        let t = Date().timeIntervalSince(start)
+        guard t >= 0, t < Self.changePulseDuration else { return 0 }
+        return CGFloat(sin(.pi * t / Self.changePulseDuration))
+    }
     var mode: NotchWindow.Mode = .floating
     var isExpanded = false
 
@@ -389,30 +451,39 @@ final class NotchContentView: NSView {
         let inset: CGFloat = 10
         var cursor = left.maxX - inset      // grow leftwards from the notch edge
 
-        func place(_ text: String, size: CGFloat, color: NSColor) {
+        func place(_ text: String, size: CGFloat, color: NSColor, pulse: CGFloat = 0) {
             guard !text.isEmpty else { return }
-            let w = measure(text, size: size)
+            // Swell and brighten together. The width is measured at the drawn
+            // size so the run still lays out correctly while it is growing, and
+            // the layout grows leftwards from the notch, so a wider figure
+            // pushes its neighbours out rather than sliding under the notch.
+            let drawnSize = size * (1 + 0.14 * pulse)
+            let drawnColor = color.blended(withFraction: 0.85 * pulse, of: .white) ?? color
+            let w = measure(text, size: drawnSize)
             drawCentred(text,
                         in: NSRect(x: cursor - w, y: left.minY, width: w, height: left.height),
-                        align: .right, size: size, color: color, halo: true)
+                        align: .right, size: drawnSize, color: drawnColor, halo: true)
             cursor -= w + 6
         }
 
         // Right-to-left: weekly sits nearest the notch, then a separator, then session.
         if let weekly = model.weekly {
-            place("W \(weekly.percent)%", size: 12, color: colour(for: weekly.percent))
+            place("W \(weekly.percent)%", size: 12, color: colour(for: weekly.percent),
+                  pulse: changePulse(weeklyChangedAt))
             place("·", size: 12, color: dim.withAlphaComponent(0.5))
         }
         place(model.session.map { "S \($0.percent)%" } ?? "S —",
-              size: 12, color: colour(for: model.session?.percent))
+              size: 12, color: colour(for: model.session?.percent),
+              pulse: changePulse(sessionChangedAt))
 
-        // Activity on the right wing, hugging the notch: dot first, then label.
+        // Activity on the right wing, hugging the notch: glyph first, then label.
         guard model.activity != .idle else { return }
-        if model.activity.isBusy { drawPulse(in: right) }
+        let colour = activityColour(model.activity)
+        drawActivityGlyph(in: right, motion: model.activity.motion, color: colour)
         let labelRect = NSRect(x: right.minX + 20, y: right.minY,
                                width: right.width - 26, height: right.height)
         drawCentred(model.activity.label, in: labelRect, align: .left, size: 11,
-                    color: model.activity.isBusy ? NSColor.systemGreen : dim, halo: true)
+                    color: colour, halo: true)
     }
 
     /// Rendered width of one run, so coloured segments can be laid out by hand.
@@ -448,9 +519,11 @@ final class NotchContentView: NSView {
             drawCentred(model.weekly.map { "W \($0.percent)%" } ?? "",
                         in: inner, align: .right, size: 12,
                         color: colour(for: model.weekly?.percent))
-            if model.activity.isBusy {
-                drawPulse(in: NSRect(x: inner.midX - 12, y: inner.minY,
-                                     width: 24, height: inner.height))
+            if model.activity != .idle {
+                drawActivityGlyph(in: NSRect(x: inner.midX - Self.glyphBox / 2, y: inner.minY,
+                                             width: Self.glyphBox, height: inner.height),
+                                  motion: model.activity.motion,
+                                  color: activityColour(model.activity))
             }
         } else {
             drawCentred(model.session.map { "S \($0.percent)%" } ?? "S —",
@@ -473,15 +546,91 @@ final class NotchContentView: NSView {
         draw(text, in: line, align: align, size: size, color: color, halo: halo)
     }
 
-    /// A small breathing dot, so "working" reads at a glance without animation
-    /// frames. Driven by wall-clock time, redrawn by the controller's ticker.
-    private func drawPulse(in rect: NSRect, color: NSColor = .systemGreen) {
-        let phase = (sin(Date().timeIntervalSince1970 * 3) + 1) / 2
-        let r: CGFloat = 2.5
-        let center = NSPoint(x: rect.minX + 8, y: rect.midY)
-        let dot = NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r))
-        color.withAlphaComponent(0.35 + 0.65 * phase).setFill()
-        dot.fill()
+    /// The activity indicator: one small dot whose MOTION says what kind of work
+    /// is happening, before the label beside it is read.
+    ///
+    /// All of it is a function of wall-clock time and is redrawn by the
+    /// controller's ticker — there is no animation state to keep in sync, so a
+    /// repaint at any moment draws the correct frame. The whole glyph stays
+    /// inside `glyphBox` points so it cannot collide with the label.
+    private static let glyphBox: CGFloat = 13
+
+    /// Set only by the motion filmstrip renderer, so the motions can be checked
+    /// frame by frame instead of by eye on a live menu bar.
+    static var clockOverride: TimeInterval?
+
+    private func drawActivityGlyph(in rect: NSRect, motion: ActivityMotion, color: NSColor) {
+        let t = Self.clockOverride ?? Date().timeIntervalSince1970
+        let center = NSPoint(x: rect.minX + Self.glyphBox / 2, y: rect.midY)
+        let span = Self.glyphBox / 2 - 2.5     // travel available either side
+
+        func dot(at point: NSPoint, radius: CGFloat, alpha: CGFloat) {
+            let path = NSBezierPath(ovalIn: NSRect(x: point.x - radius, y: point.y - radius,
+                                                   width: 2 * radius, height: 2 * radius))
+            color.withAlphaComponent(max(0, min(1, alpha))).setFill()
+            path.fill()
+        }
+
+        switch motion {
+        case .still:
+            dot(at: center, radius: 2.5, alpha: 0.5)
+
+        case .breathe:
+            let phase = (sin(t * 3) + 1) / 2
+            dot(at: center, radius: 2.5, alpha: 0.35 + 0.65 * phase)
+
+        case .sweep:
+            // Scanning: back and forth, with a faint trail behind it.
+            let x = center.x + span * CGFloat(sin(t * 2.6))
+            let lag = center.x + span * CGFloat(sin(t * 2.6 - 0.35))
+            dot(at: NSPoint(x: lag, y: center.y), radius: 1.8, alpha: 0.25)
+            dot(at: NSPoint(x: x, y: center.y), radius: 2.3, alpha: 1)
+
+        case .tick:
+            // A command running: travels one way, repeatedly, fading in and out
+            // at the ends so the restart does not read as a jump back.
+            let period = 0.85
+            let f = CGFloat((t.truncatingRemainder(dividingBy: period)) / period)
+            let x = center.x - span + 2 * span * f
+            let fade = sin(.pi * Double(f))
+            dot(at: NSPoint(x: x, y: center.y), radius: 2.3, alpha: CGFloat(fade))
+
+        case .blink:
+            // Writing: discrete, one edit at a time — deliberately not smooth.
+            let on = t.truncatingRemainder(dividingBy: 0.72) < 0.34
+            dot(at: center, radius: 2.5, alpha: on ? 1 : 0.15)
+
+        case .orbit:
+            let angle = t * 2.4
+            let r: CGFloat = span * 0.8
+            let p = NSPoint(x: center.x + r * CGFloat(cos(angle)),
+                            y: center.y + r * CGFloat(sin(angle)))
+            dot(at: center, radius: 1.2, alpha: 0.25)
+            dot(at: p, radius: 2.1, alpha: 1)
+
+        case .attention:
+            // A double knock, then a pause. Waiting is the only state that needs
+            // something FROM you, so it is the only one allowed to be insistent.
+            let cycle = t.truncatingRemainder(dividingBy: 1.5)
+            let knock: Double
+            switch cycle {
+            case ..<0.18: knock = sin(.pi * cycle / 0.18)
+            case 0.28..<0.46: knock = sin(.pi * (cycle - 0.28) / 0.18)
+            default: knock = 0
+            }
+            dot(at: center, radius: 2.5 + 0.8 * CGFloat(knock), alpha: 0.4 + 0.6 * CGFloat(knock))
+        }
+    }
+
+    /// Only for `renderMotionStrip`, which draws glyphs with no model around them.
+    func renderGlyphForTesting(in rect: NSRect, motion: ActivityMotion, color: NSColor) {
+        drawActivityGlyph(in: rect, motion: motion, color: color)
+    }
+
+    /// Green for progress, amber for the state that is asking something of you.
+    private func activityColour(_ state: ActivityState) -> NSColor {
+        if state.isRequestingAttention { return .systemOrange }
+        return state.isBusy ? .systemGreen : dim
     }
 
     // MARK: Expanded
@@ -741,6 +890,45 @@ extension NotchWindow {
     /// Renders both notch states to PNGs without a display, so the drawing code
     /// can be checked in a build step instead of by eye. Invoked with
     /// `ClaudeUsageBar --render-notch <dir>`.
+    /// Renders one row of frames per motion across a full cycle, so the glyphs
+    /// can be compared as stills. Motion is otherwise invisible to every check
+    /// available here — see the note on `clockOverride`.
+    static func renderMotionStrip(to directory: String, frames: Int = 12, seconds: TimeInterval = 1.5) throws {
+        let cell = NSSize(width: 26, height: 26)
+        let motions: [(String, ActivityMotion, NSColor)] = [
+            ("breathe", .breathe, .systemGreen),
+            ("sweep", .sweep, .systemGreen),
+            ("tick", .tick, .systemGreen),
+            ("blink", .blink, .systemGreen),
+            ("orbit", .orbit, .systemGreen),
+            ("attention", .attention, .systemOrange),
+            ("still", .still, NSColor.white.withAlphaComponent(0.55)),
+        ]
+
+        let size = NSSize(width: cell.width * CGFloat(frames),
+                          height: cell.height * CGFloat(motions.count))
+        let view = NotchContentView(frame: NSRect(origin: .zero, size: size))
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor(calibratedWhite: 0.12, alpha: 1).setFill()
+        view.bounds.fill()
+        for (row, entry) in motions.enumerated() {
+            for frame in 0..<frames {
+                NotchContentView.clockOverride = seconds * TimeInterval(frame) / TimeInterval(frames)
+                let box = NSRect(x: cell.width * CGFloat(frame),
+                                 y: cell.height * CGFloat(row),
+                                 width: cell.width, height: cell.height)
+                view.renderGlyphForTesting(in: box, motion: entry.1, color: entry.2)
+            }
+        }
+        NotchContentView.clockOverride = nil
+        NSGraphicsContext.restoreGraphicsState()
+        if let png = rep.representation(using: .png, properties: [:]) {
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("motion-strip.png"))
+        }
+    }
+
     static func renderSamples(model: NotchModel, to directory: String) throws {
         let screen = NotchGeometry.preferredScreen
         let notchWidth = screen.flatMap { NotchGeometry.notchWidth(of: $0) } ?? 200
